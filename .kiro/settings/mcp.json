@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "relayghost-verifier": {
+      "command": "python3",
+      "args": ["engine/mcp_server.py"],
+      "disabled": false,
+      "autoApprove": ["verify_plc_file", "verify_plc_xml_string"]
+    }
+  }
+}

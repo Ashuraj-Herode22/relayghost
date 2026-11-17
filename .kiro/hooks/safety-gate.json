@@ -1,0 +1,15 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "plc-temporal-safety-gate",
+      "description": "Automatically runs the RelayGhost temporal model checker whenever a PLC XML file is saved",
+      "trigger": "PostFileSave",
+      "matcher": "\\.xml$",
+      "action": {
+        "type": "command",
+        "command": "python3 engine/verify_cli.py {{filePath}}"
+      }
+    }
+  ]
+}
