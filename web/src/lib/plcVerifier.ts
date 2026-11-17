@@ -628,10 +628,10 @@ export function executeModelChecker(rungs: Rung[], maxDepth: number = 15): Verif
     { "%IX0.4": true, "%IX0.5": true, "%IX0.0": true, "%IX0.2": false, "%IX0.3": true }, // Cycle 1: Start PB -> Arm Extends
     { "%IX0.4": true, "%IX0.5": false, "%IX0.0": true, "%IX0.2": false, "%IX0.3": true }, // Cycle 2: Arm at Die Center
     { "%IX0.4": true, "%IX0.5": false, "%IX0.0": false, "%IX0.2": true, "%IX0.3": true }, // Cycle 3: Part Placed, Arm Retracted Home (%IX0.2)
-    { "%IX0.4": true, "%IX0.5": false, "%IX0.0": false, "%IX0.2": true, "%IX0.3": true }, // Cycle 4: Timer T4:1 Accumulates
-    { "%IX0.4": true, "%IX0.5": false, "%IX0.0": false, "%IX0.2": true, "%IX0.3": true }, // Cycle 5: Press Ram Closes (%QX0.0 Down)
-    { "%IX0.4": true, "%IX0.5": false, "%IX0.0": false, "%IX0.2": true, "%IX0.3": true }, // Cycle 6: Stamping Form Complete
-    { "%IX0.4": true, "%IX0.5": false, "%IX0.0": false, "%IX0.2": true, "%IX0.3": true }, // Cycle 7: Ram Retracted (%IX0.1)
+    { "%IX0.4": true, "%IX0.5": false, "%IX0.0": false, "%IX0.2": true, "%IX0.3": true }, // Cycle 4: Press Ram Closes (%QX0.0 Down)
+    { "%IX0.4": true, "%IX0.5": false, "%IX0.0": false, "%IX0.2": false, "%IX0.3": true }, // Cycle 5: Stamping Complete -> Ram Retracts
+    { "%IX0.4": true, "%IX0.5": false, "%IX0.0": false, "%IX0.2": false, "%IX0.3": true }, // Cycle 6: Machine Standby
+    { "%IX0.4": true, "%IX0.5": false, "%IX0.0": false, "%IX0.2": false, "%IX0.3": true }, // Cycle 7: Ready for Next Part
   ];
 
   let currNominal = initialState;
@@ -703,20 +703,33 @@ export function patchLadderLogicWithInterlocks(
     return r;
   });
 
-  // Check if primary coil uses OTL and needs an unlatch transition (OTU) when Arm Home / Part Placed (%IX0.2)
-  const primaryIsOtl = patched.some((r) => r.output_target === cA && r.output_type === "OTL");
-  const hasOtu = patched.some((r) => r.output_target === cA && r.output_type === "OTU");
-  if (primaryIsOtl && !hasOtu) {
-    const maxRungId = Math.max(...patched.map((r) => r.rung_id), 0);
-    patched.push({
-      rung_id: maxRungId + 1,
-      name: `Rung_${cA}_Auto_Retract_OTU`,
-      branches: [[["%IX0.2", false]]], // When Arm Home (%IX0.2) or transfer complete, unlatch
-      output_type: "OTU",
-      output_target: cA,
-      preset_ms: 0,
-      isNewInterlock: true,
-    });
+  // Ensure both conflicting coils have an unlatch transition if using OTL
+  for (const c of [cA, cB]) {
+    const isOtl = patched.some((r) => r.output_target === c && r.output_type === "OTL");
+    const hasOtu = patched.some((r) => r.output_target === c && r.output_type === "OTU");
+    if (isOtl && !hasOtu) {
+      const maxRungId = Math.max(...patched.map((r) => r.rung_id), 0);
+      patched.push({
+        rung_id: maxRungId + 1,
+        name: `Rung_${c}_Auto_Retract_OTU`,
+        branches: [[["%IX0.2", false]]], // When Arm Home (%IX0.2) or transfer complete, unlatch
+        output_type: "OTU",
+        output_target: c,
+        preset_ms: 0,
+        isNewInterlock: true,
+      });
+    }
+  }
+
+  // Ensure secondary actuator has a productive sequential cascade trigger when primary actuator has cleared:
+  // Inject [ [ "%IX0.2", false ], [ cB, true ] ] into cA rung so press strokes when Arm is Home
+  for (const r of patched) {
+    if (r.output_target === cA && (r.output_type === "COIL" || r.output_type === "OTL")) {
+      const hasCascade = r.branches.some((b) => b.some(([addr]) => addr === "%IX0.2"));
+      if (!hasCascade) {
+        r.branches.push([["%IX0.2", false], [cB, true]]);
+      }
+    }
   }
 
   const patchDescription = `Synthesized reciprocal normally-closed interlocks [ / ${cA} ] and [ / ${cB} ] with complete workcycle transition. Conflicting actuators operate in safe sequential cascade without deadlock.`;
@@ -730,6 +743,8 @@ export function patchLadderLogicWithInterlocks(
  * When parsed back into parsePlcopenXml(), it produces valid rungs that verify as safe: true.
  */
 export function generatePatchedPlcopenXml(rungs: Rung[]): string {
+  let localIdCounter = 2; // localId 1 is leftPowerRail
+
   let xml = `<?xml version="1.0" encoding="utf-8"?>
 <project xmlns="http://www.plcopen.org/xml/tc6_0201">
   <fileHeader companyName="Rolls-Royce / RelayGhost" productName="RelayGhost Patched Safety Controller" productVersion="2.4" creationDateTime="${new Date().toISOString()}"/>
@@ -747,9 +762,12 @@ export function generatePatchedPlcopenXml(rungs: Rung[]): string {
         <interface/>
         <body>
           <LD>
+            <leftPowerRail localId="1">
+              <position x="20" y="50"/>
+            </leftPowerRail>
 `;
 
-  let localIdCounter = 1;
+  const coilIds: number[] = [];
 
   for (const r of rungs) {
     const yPos = r.rung_id * 100;
@@ -757,17 +775,15 @@ export function generatePatchedPlcopenXml(rungs: Rung[]): string {
 
     // Emit contacts for each branch
     for (const branch of r.branches) {
-      let prevContactId: number | null = null;
-      let xPos = 100;
+      let prevContactId: number = 1; // starts connected to leftPowerRail (localId 1)
+      let xPos = 120;
 
       for (const [addr, isNc] of branch) {
         const cId = localIdCounter++;
         xml += `            <contact localId="${cId}" negated="${isNc ? "true" : "false"}">\n`;
         xml += `              <position x="${xPos}" y="${yPos}"/>\n`;
         xml += `              <connectionPointIn>\n`;
-        if (prevContactId !== null) {
-          xml += `                <connection refLocalId="${prevContactId}"/>\n`;
-        }
+        xml += `                <connection refLocalId="${prevContactId}"/>\n`;
         xml += `              </connectionPointIn>\n`;
         xml += `              <variable>${addr}</variable>\n`;
         xml += `            </contact>\n`;
@@ -776,14 +792,13 @@ export function generatePatchedPlcopenXml(rungs: Rung[]): string {
         xPos += 120;
       }
 
-      if (prevContactId !== null) {
-        branchRefIds.push(prevContactId);
-      }
+      branchRefIds.push(prevContactId);
     }
 
     // Emit Coil or Function Block
     if (r.output_type === "TON" || r.output_type === "TOF" || r.output_type === "CTU") {
       const bId = localIdCounter++;
+      coilIds.push(bId);
       xml += `            <block localId="${bId}" typeName="${r.output_type}" instanceName="${r.output_target}">\n`;
       xml += `              <position x="600" y="${yPos}"/>\n`;
       xml += `              <inputVariables>\n`;
@@ -807,6 +822,7 @@ export function generatePatchedPlcopenXml(rungs: Rung[]): string {
       xml += `            </block>\n`;
     } else {
       const coilId = localIdCounter++;
+      coilIds.push(coilId);
       const storageAttr = r.output_type === "OTL" ? ' storage="set"' : r.output_type === "OTU" ? ' storage="reset"' : "";
       xml += `            <coil localId="${coilId}"${storageAttr}>\n`;
       xml += `              <position x="650" y="${yPos}"/>\n`;
@@ -819,6 +835,17 @@ export function generatePatchedPlcopenXml(rungs: Rung[]): string {
       xml += `            </coil>\n`;
     }
   }
+
+  // Right Power Rail connected to coils
+  const rightRailId = localIdCounter++;
+  xml += `            <rightPowerRail localId="${rightRailId}">\n`;
+  xml += `              <position x="850" y="50"/>\n`;
+  xml += `              <connectionPointIn>\n`;
+  for (const cId of coilIds) {
+    xml += `                <connection refLocalId="${cId}"/>\n`;
+  }
+  xml += `              </connectionPointIn>\n`;
+  xml += `            </rightPowerRail>\n`;
 
   xml += `          </LD>
         </body>

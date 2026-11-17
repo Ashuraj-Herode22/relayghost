@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef, useState, useCallback } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { ReplayFrame } from "@/lib/plcVerifier";
 
@@ -11,16 +11,22 @@ interface WorkcellCanvasProps {
 
 /**
  * Zero-dependency WebAudio Industrial Synthesizer
+ * Lazily initialized to honor browser autoplay policies without console warnings.
  */
 class IndustrialAudioSynthesizer {
   private ctx: AudioContext | null = null;
   private muted: boolean = false;
 
-  public init() {
+  public unlock() {
+    if (this.muted) return;
     if (typeof window === "undefined") return;
     if (!this.ctx) {
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-      if (AudioCtx) this.ctx = new AudioCtx();
+      if (AudioCtx) {
+        try {
+          this.ctx = new AudioCtx();
+        } catch {}
+      }
     }
     if (this.ctx && this.ctx.state === "suspended") {
       this.ctx.resume().catch(() => {});
@@ -29,12 +35,15 @@ class IndustrialAudioSynthesizer {
 
   public setMuted(muted: boolean) {
     this.muted = muted;
+    if (!muted) this.unlock();
   }
 
   private getContext(): AudioContext | null {
     if (this.muted) return null;
-    this.init();
-    return this.ctx;
+    if (!this.ctx || this.ctx.state !== "running") {
+      this.unlock();
+    }
+    return this.ctx && this.ctx.state === "running" ? this.ctx : null;
   }
 
   // Servo motor hum during mechanical movement
@@ -157,16 +166,29 @@ export default function WorkcellCanvas({ currentFrame, isCollision }: WorkcellCa
     sparkParticles: THREE.Points;
   } | null>(null);
 
-  // Initialize Audio Synthesizer once
+  // Lazy browser autoplay unlock
   useEffect(() => {
     if (!audioRef.current) {
       audioRef.current = new IndustrialAudioSynthesizer();
     }
+
+    const unlockListener = () => {
+      audioRef.current?.unlock();
+      window.removeEventListener("pointerdown", unlockListener);
+      window.removeEventListener("keydown", unlockListener);
+    };
+
+    window.addEventListener("pointerdown", unlockListener, { once: true });
+    window.addEventListener("keydown", unlockListener, { once: true });
+
+    return () => {
+      window.removeEventListener("pointerdown", unlockListener);
+      window.removeEventListener("keydown", unlockListener);
+    };
   }, []);
 
   const toggleMute = () => {
     if (!audioRef.current) return;
-    audioRef.current.init();
     const nextMuted = !isMuted;
     setIsMuted(nextMuted);
     audioRef.current.setMuted(nextMuted);
@@ -462,55 +484,61 @@ export default function WorkcellCanvas({ currentFrame, isCollision }: WorkcellCa
     <div className="relative w-full h-full min-h-[380px] rounded-lg overflow-hidden border border-slate-800 bg-[#090d16]">
       <div ref={mountRef} className="w-full h-full" />
 
-      {/* 3D HUD Overlay Left */}
-      <div className="absolute top-3 left-3 bg-black/70 backdrop-blur-md px-3 py-1.5 rounded border border-slate-700/60 text-xs font-mono text-slate-300 pointer-events-none flex items-center space-x-2">
-        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-        <span>3D DIGITAL TWIN • 6 UNIVERSAL ACTUATORS</span>
-      </div>
+      {/* Unified Compact HUD Bar (Non-overlapping across all viewports) */}
+      <div className="absolute top-2.5 inset-x-2.5 flex flex-wrap items-center justify-between gap-2 pointer-events-none z-10">
+        {/* Left Status Pill */}
+        <div className="bg-black/80 backdrop-blur-md px-2.5 py-1 rounded border border-slate-700/60 text-[11px] font-mono text-slate-300 flex items-center space-x-2 pointer-events-auto shadow-md">
+          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+          <span className="hidden sm:inline">3D DIGITAL TWIN • 6 ACTUATORS</span>
+          <span className="sm:hidden">3D TWIN</span>
+        </div>
 
-      {/* Audio & Camera Controls Right */}
-      <div className="absolute top-3 right-3 bg-black/70 backdrop-blur-md p-1 rounded border border-slate-700/60 text-[11px] font-mono flex items-center space-x-1.5 z-10">
-        {/* Audio Mute/Unmute Synthesizer Toggle */}
-        <button
-          onClick={toggleMute}
-          className={`px-2 py-0.5 rounded border transition flex items-center space-x-1 ${
-            isMuted
-              ? "bg-slate-900 border-slate-700 text-slate-400 hover:text-white"
-              : "bg-emerald-950/70 border-emerald-500/60 text-emerald-300"
-          }`}
-          title="Toggle Industrial Audio Effects (WebAudio Synthesizer)"
-        >
-          <span>{isMuted ? "🔇 Audio OFF" : "🔊 Audio ON"}</span>
-        </button>
+        {/* Right Controls Pill: Audio + Camera Presets */}
+        <div className="bg-black/80 backdrop-blur-md p-1 rounded border border-slate-700/60 text-[11px] font-mono flex items-center gap-1 pointer-events-auto shadow-md">
+          {/* Audio Mute/Unmute Synthesizer Toggle */}
+          <button
+            onClick={toggleMute}
+            className={`px-2 py-0.5 rounded border transition flex items-center space-x-1 ${
+              isMuted
+                ? "bg-slate-900 border-slate-700 text-slate-400 hover:text-white"
+                : "bg-emerald-950/70 border-emerald-500/60 text-emerald-300"
+            }`}
+            title="Toggle Industrial Audio Effects (WebAudio Synthesizer)"
+          >
+            <span>{isMuted ? "🔇 Audio" : "🔊 Audio"}</span>
+          </button>
 
-        {/* Camera Views */}
-        <button
-          onClick={() => setCameraView("iso")}
-          className={`px-2 py-0.5 rounded transition ${
-            cameraView === "iso" ? "bg-amber-500 text-slate-950 font-bold" : "text-slate-400 hover:text-white"
-          }`}
-          title="Isometric Global View"
-        >
-          Isometric
-        </button>
-        <button
-          onClick={() => setCameraView("die")}
-          className={`px-2 py-0.5 rounded transition ${
-            cameraView === "die" ? "bg-amber-500 text-slate-950 font-bold" : "text-slate-400 hover:text-white"
-          }`}
-          title="Zoom Into Die Collision Zone"
-        >
-          Die Zoom
-        </button>
-        <button
-          onClick={() => setCameraView("top")}
-          className={`px-2 py-0.5 rounded transition ${
-            cameraView === "top" ? "bg-amber-500 text-slate-950 font-bold" : "text-slate-400 hover:text-white"
-          }`}
-          title="Top-Down Schematic View"
-        >
-          Top View
-        </button>
+          <div className="w-[1px] h-3.5 bg-slate-700 mx-0.5" />
+
+          {/* Camera Views */}
+          <button
+            onClick={() => setCameraView("iso")}
+            className={`px-2 py-0.5 rounded transition ${
+              cameraView === "iso" ? "bg-amber-500 text-slate-950 font-bold" : "text-slate-400 hover:text-white"
+            }`}
+            title="Isometric Global View"
+          >
+            Iso
+          </button>
+          <button
+            onClick={() => setCameraView("die")}
+            className={`px-2 py-0.5 rounded transition ${
+              cameraView === "die" ? "bg-amber-500 text-slate-950 font-bold" : "text-slate-400 hover:text-white"
+            }`}
+            title="Zoom Into Die Collision Zone"
+          >
+            Die Zoom
+          </button>
+          <button
+            onClick={() => setCameraView("top")}
+            className={`px-2 py-0.5 rounded transition ${
+              cameraView === "top" ? "bg-amber-500 text-slate-950 font-bold" : "text-slate-400 hover:text-white"
+            }`}
+            title="Top-Down Schematic View"
+          >
+            Top
+          </button>
+        </div>
       </div>
 
       {/* Collision Breach Banner */}
