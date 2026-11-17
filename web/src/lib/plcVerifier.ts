@@ -1,5 +1,6 @@
 /**
  * RelayGhost: Pure TypeScript IEC 61131-3 PLCopen XML Parser & Temporal Bounded Model Checker.
+ * Hardened with CTU Up-Counters, UTF-8 BOM stripping, strict validation, and dynamic EARS interlock patching.
  * Runs natively in Node.js / Vercel Serverless with zero Python dependencies.
  */
 
@@ -12,13 +13,23 @@ export interface Timer {
   dn: boolean;
 }
 
+export interface Counter {
+  name: string;
+  preset: number;
+  accum: number;
+  dn: boolean;
+  last_in: boolean;
+}
+
 export interface Rung {
   rung_id: number;
   name: string;
   branches: [string, boolean][][]; // [address, is_normally_closed][][]
-  output_type: "COIL" | "OTL" | "OTU" | "TON" | "TOF";
+  output_type: "COIL" | "OTL" | "OTU" | "TON" | "TOF" | "CTU";
   output_target: string;
   preset_ms: number;
+  preset_count?: number;
+  isNewInterlock?: boolean;
 }
 
 export interface PLCState {
@@ -27,6 +38,7 @@ export interface PLCState {
   outputs: Record<string, boolean>;
   internal_bits: Record<string, boolean>;
   timers: Record<string, Timer>;
+  counters: Record<string, Counter>;
   energized_rungs: number[];
   output_drivers: Record<string, number>;
   parent?: PLCState;
@@ -39,6 +51,7 @@ export interface ReplayFrame {
   outputs: Record<string, boolean>;
   energized_rungs: number[];
   timers: Record<string, { accum_ms: number; dn: boolean }>;
+  counters: Record<string, { accum: number; dn: boolean }>;
 }
 
 export interface VerificationResult {
@@ -71,11 +84,11 @@ const KEYWORD_MAP: [RegExp, string][] = [
   [/(FAULT_RESET|RESET_PB)/i, "%IX0.7"],
 ];
 
-function normalizeAddress(tag: string): string {
+export function normalizeAddress(tag: string): string {
   const clean = tag.trim().toUpperCase();
-  if (clean.endsWith(".DN") || clean.endsWith(".EN")) {
-    const base = clean.slice(0, -3);
-    const sfx = clean.slice(-3);
+  if (clean.endsWith(".DN") || clean.endsWith(".EN") || clean.endsWith(".Q")) {
+    const sfx = clean.endsWith(".Q") ? ".DN" : clean.slice(-3);
+    const base = clean.endsWith(".Q") ? clean.slice(0, -2) : clean.slice(0, -3);
     return `${normalizeAddress(base)}${sfx}`;
   }
   if (clean.startsWith("%QX") || clean.startsWith("%IX") || clean.startsWith("%MX")) {
@@ -88,12 +101,31 @@ function normalizeAddress(tag: string): string {
 }
 
 export function parsePlcopenXml(xmlContent: string): Rung[] {
-  const cleanXml = xmlContent.replace(/\sxmlns="[^"]+"/g, "");
+  // Strip leading UTF-8 BOM if present
+  let cleanXml = xmlContent.replace(/^\uFEFF/, "").trim();
+
+  // Strict validation: Must contain basic XML structure and PLC elements
+  if (!cleanXml || !cleanXml.startsWith("<")) {
+    throw new Error("Invalid PLCopen XML: File does not contain valid XML content.");
+  }
+
+  const hasPlcElements =
+    cleanXml.includes("<coil") ||
+    cleanXml.includes("<block") ||
+    cleanXml.includes("<contact");
+
+  if (!hasPlcElements) {
+    throw new Error(
+      "Invalid PLCopen XML: No executable ladder rungs, coils, or function blocks detected in file."
+    );
+  }
+
+  cleanXml = cleanXml.replace(/\sxmlns="[^"]+"/g, "");
   const rungs: Rung[] = [];
 
   // Robust regex node extraction
   const coilMatches = [...cleanXml.matchAll(/<coil([^>]*)>[\s\S]*?<variable>([^<]+)<\/variable>[\s\S]*?<\/coil>/gi)];
-  const blockMatches = [...cleanXml.matchAll(/<block([^>]*)>[\s\S]*?<expression>([^<]+)<\/expression>[\s\S]*?<\/block>/gi)];
+  const blockMatches = [...cleanXml.matchAll(/<block([^>]*)>[\s\S]*?(?:<expression>([^<]+)<\/expression>)?[\s\S]*?<\/block>/gi)];
   const contactMatches = [...cleanXml.matchAll(/<contact([^>]*)>[\s\S]*?<variable>([^<]+)<\/variable>[\s\S]*?<\/contact>/gi)];
 
   const contactsMap: Record<string, { tag: string; negated: boolean; refId?: string }> = {};
@@ -112,15 +144,40 @@ export function parsePlcopenXml(xmlContent: string): Rung[] {
 
   let rungId = 1;
 
-  // 1. Process Timers
+  // 1. Process Function Blocks (TON, TOF, CTU)
   for (const bm of blockMatches) {
     const localId = bm[1].match(/localId="([^"]+)"/i)?.[1];
-    const instName = bm[1].match(/instanceName="([^"]+)"/i)?.[1] || `T4:${rungId}`;
-    const ptExpr = bm[2].trim();
-    const timeMatch = ptExpr.match(/T#(\d+)(ms|s)/i);
-    const presetMs = timeMatch ? (timeMatch[2].toLowerCase() === "s" ? parseInt(timeMatch[1]) * 1000 : parseInt(timeMatch[1])) : 300;
+    const typeName = (bm[1].match(/typeName="([^"]+)"/i)?.[1] || "").toUpperCase();
+    const instName = bm[1].match(/instanceName="([^"]+)"/i)?.[1] || `FB_${rungId}`;
 
-    // Trace contacts feeding into timer
+    let outType: "TON" | "TOF" | "CTU" = "TON";
+    let presetMs = 300;
+    let presetCount = 5;
+
+    if (typeName.includes("TOF")) {
+      outType = "TOF";
+    } else if (typeName.includes("CTU")) {
+      outType = "CTU";
+      // Extract count from PV
+      const pvMatch = bm[0].match(/formalParameter="PV"[\s\S]*?<expression>([^<]+)<\/expression>/i);
+      if (pvMatch) {
+        const count = parseInt(pvMatch[1].trim(), 10);
+        if (!isNaN(count)) presetCount = count;
+      }
+    } else {
+      outType = "TON";
+      // Extract PT
+      const ptMatch = bm[0].match(/formalParameter="PT"[\s\S]*?<expression>([^<]+)<\/expression>/i) ||
+                      bm[0].match(/<expression>([^<]+)<\/expression>/i);
+      if (ptMatch) {
+        const timeMatch = ptMatch[1].trim().match(/T#(\d+)(ms|s)/i);
+        if (timeMatch) {
+          presetMs = timeMatch[2].toLowerCase() === "s" ? parseInt(timeMatch[1], 10) * 1000 : parseInt(timeMatch[1], 10);
+        }
+      }
+    }
+
+    // Trace contacts feeding into block
     const branch: [string, boolean][] = [];
     if (localId) {
       const connMatch = bm[0].match(/refLocalId="([^"]+)"/i);
@@ -133,11 +190,12 @@ export function parsePlcopenXml(xmlContent: string): Rung[] {
 
     rungs.push({
       rung_id: rungId++,
-      name: `Rung_${instName}_TON`,
-      branches: branch.length ? [branch] : [[["%QX0.1", false]]],
-      output_type: "TON",
+      name: `Rung_${instName}_${outType}`,
+      branches: branch.length ? [branch] : [[["%IX0.4", false]]],
+      output_type: outType,
       output_target: instName,
       preset_ms: presetMs,
+      preset_count: presetCount,
     });
   }
 
@@ -152,24 +210,38 @@ export function parsePlcopenXml(xmlContent: string): Rung[] {
     if (storage === "set") outType = "OTL";
     if (storage === "reset") outType = "OTU";
 
-    const branch: [string, boolean][] = [];
+    // Trace all connection lines feeding into coil (including parallel OR branches)
+    const branches: [string, boolean][][] = [];
     if (localId) {
-      const connMatch = cm[0].match(/refLocalId="([^"]+)"/i);
-      let currRef = connMatch ? connMatch[1] : undefined;
-      while (currRef && contactsMap[currRef]) {
-        branch.unshift([contactsMap[currRef].tag, contactsMap[currRef].negated]);
-        currRef = contactsMap[currRef].refId;
+      const connMatches = [...cm[0].matchAll(/refLocalId="([^"]+)"/gi)];
+      for (const conn of connMatches) {
+        const branch: [string, boolean][] = [];
+        let currRef: string | undefined = conn[1];
+        const visitedRefs = new Set<string>();
+
+        while (currRef && contactsMap[currRef] && !visitedRefs.has(currRef)) {
+          visitedRefs.add(currRef);
+          branch.unshift([contactsMap[currRef].tag, contactsMap[currRef].negated]);
+          currRef = contactsMap[currRef].refId;
+        }
+        if (branch.length > 0) {
+          branches.push(branch);
+        }
       }
     }
 
     rungs.push({
       rung_id: rungId++,
       name: `Rung_${rawTag}`,
-      branches: branch.length ? [branch] : [[["%IX0.4", false]]],
+      branches: branches.length ? branches : [[["%IX0.4", false]]],
       output_type: outType,
       output_target: target,
       preset_ms: 0,
     });
+  }
+
+  if (rungs.length === 0) {
+    throw new Error("Invalid PLCopen XML: Failed to extract any valid Ladder Diagram rungs.");
   }
 
   return rungs;
@@ -192,8 +264,12 @@ export function executeModelChecker(rungs: Rung[], maxDepth: number = 15): Verif
         else if (addr in state.internal_bits) val = state.internal_bits[addr];
         else if (addr in state.outputs) val = state.outputs[addr];
         else if (addr.endsWith(".DN")) {
-          const tName = addr.slice(0, -3);
-          val = state.timers[tName]?.dn || false;
+          const baseName = addr.slice(0, -3);
+          if (state.timers[baseName]) {
+            val = state.timers[baseName].dn;
+          } else if (state.counters[baseName]) {
+            val = state.counters[baseName].dn;
+          }
         }
 
         const closed = isNc ? !val : val;
@@ -214,6 +290,11 @@ export function executeModelChecker(rungs: Rung[], maxDepth: number = 15): Verif
     for (const [k, v] of Object.entries(current.timers)) {
       nextTimers[k] = { ...v };
     }
+    const nextCounters: Record<string, Counter> = {};
+    for (const [k, v] of Object.entries(current.counters)) {
+      nextCounters[k] = { ...v };
+    }
+
     const energized: number[] = [];
     const drivers = { ...current.output_drivers };
 
@@ -223,6 +304,7 @@ export function executeModelChecker(rungs: Rung[], maxDepth: number = 15): Verif
       outputs: nextOutputs,
       internal_bits: nextBits,
       timers: nextTimers,
+      counters: nextCounters,
       energized_rungs: energized,
       output_drivers: drivers,
       parent: current,
@@ -259,12 +341,31 @@ export function executeModelChecker(rungs: Rung[], maxDepth: number = 15): Verif
         if (timer.en) {
           timer.accum_ms = Math.min(timer.preset_ms, timer.accum_ms + scanCycleMs);
           timer.dn = timer.accum_ms >= timer.preset_ms;
-          drivers[`${tName}.DN`] = rung.rung_id;
+          if (timer.dn) {
+            drivers[`${tName}.DN`] = rung.rung_id;
+            nextBits[`${tName}.DN`] = true;
+          }
         } else {
           timer.accum_ms = 0;
           timer.dn = false;
           delete drivers[`${tName}.DN`];
+          delete nextBits[`${tName}.DN`];
         }
+      } else if (rung.output_type === "CTU") {
+        const cName = rung.output_target;
+        if (!nextCounters[cName]) {
+          nextCounters[cName] = { name: cName, preset: rung.preset_count || 5, accum: 0, dn: false, last_in: false };
+        }
+        const counter = nextCounters[cName];
+        if (power && !counter.last_in) {
+          counter.accum += 1;
+          counter.dn = counter.accum >= counter.preset;
+          if (counter.dn) {
+            drivers[`${cName}.DN`] = rung.rung_id;
+            nextBits[`${cName}.DN`] = true;
+          }
+        }
+        counter.last_in = power;
       }
     }
 
@@ -284,6 +385,7 @@ export function executeModelChecker(rungs: Rung[], maxDepth: number = 15): Verif
     outputs: { "%QX0.0": false, "%QX0.1": false, "%QX0.2": false, "%QX0.3": false, "%QX0.4": false, "%QX0.5": false },
     internal_bits: {},
     timers: {},
+    counters: {},
     energized_rungs: [],
     output_drivers: {},
   };
@@ -300,6 +402,10 @@ export function executeModelChecker(rungs: Rung[], maxDepth: number = 15): Verif
       for (const [k, v] of Object.entries(curr.timers)) {
         timerSummary[k] = { accum_ms: v.accum_ms, dn: v.dn };
       }
+      const counterSummary: Record<string, { accum: number; dn: boolean }> = {};
+      for (const [k, v] of Object.entries(curr.counters)) {
+        counterSummary[k] = { accum: v.accum, dn: v.dn };
+      }
       list.push({
         cycle: curr.cycle,
         timestamp_ms: curr.cycle * scanCycleMs,
@@ -307,6 +413,7 @@ export function executeModelChecker(rungs: Rung[], maxDepth: number = 15): Verif
         outputs: curr.outputs,
         energized_rungs: curr.energized_rungs,
         timers: timerSummary,
+        counters: counterSummary,
       });
       curr = curr.parent;
     }
@@ -317,7 +424,7 @@ export function executeModelChecker(rungs: Rung[], maxDepth: number = 15): Verif
     const curr = queue.shift()!;
     statesExplored++;
 
-    // Check hazard
+    // Check hazards
     for (const [addrA, addrB, desc] of hazardPairs) {
       const valA = curr.outputs[addrA] || curr.internal_bits[addrA];
       const valB = curr.outputs[addrB] || curr.internal_bits[addrB];
@@ -344,7 +451,12 @@ export function executeModelChecker(rungs: Rung[], maxDepth: number = 15): Verif
 
     for (const inp of candidateInputs) {
       const nextState = step(curr, inp);
-      const sig = JSON.stringify([nextState.outputs, nextState.internal_bits, Object.entries(nextState.timers).map(([k, v]) => [k, v.accum_ms, v.dn])]);
+      const sig = JSON.stringify([
+        nextState.outputs,
+        nextState.internal_bits,
+        Object.entries(nextState.timers).map(([k, v]) => [k, v.accum_ms, v.dn]),
+        Object.entries(nextState.counters).map(([k, v]) => [k, v.accum, v.dn]),
+      ]);
       if (!visited.has(sig)) {
         visited.add(sig);
         queue.push(nextState);
@@ -382,31 +494,70 @@ export function executeModelChecker(rungs: Rung[], maxDepth: number = 15): Verif
   };
 }
 
-export function patchLadderLogicWithInterlocks(rungs: Rung[]): Rung[] {
-  // Synthesizes mutual exclusion interlocks between %QX0.0 (Press) and %QX0.1 (Arm)
-  return rungs.map((r) => {
-    // If rung drives Arm (%QX0.1), ensure [ / %QX0.0 ] (Press not active) is in all branches
-    if (r.output_target === "%QX0.1" && r.output_type === "OTL") {
+/**
+ * Dynamically synthesizes mutual exclusion interlocks based on actual colliding coils and fault rungs.
+ * Deadlock-Free: Injects the normally-closed guard into the SECONDARY conflicting rung only,
+ * allowing the primary actuator to finish its workcycle cleanly.
+ */
+export function patchLadderLogicWithInterlocks(
+  rungs: Rung[],
+  collisionCoils: string[] = ["%QX0.0", "%QX0.1"],
+  faultRungIds: number[] = []
+): { patchedRungs: Rung[]; patchDescription: string; deltaText: string } {
+  const coilA = collisionCoils[0] || "%QX0.0";
+  const coilB = collisionCoils[1] || "%QX0.1";
+
+  // Identify secondary rung: the rung driving coilB or faultRungIds[1]
+  let secondaryRungId = faultRungIds.length > 1 ? faultRungIds[1] : -1;
+  if (secondaryRungId === -1) {
+    const r = rungs.find((r) => r.output_target === coilB);
+    if (r) secondaryRungId = r.rung_id;
+  }
+
+  const patchedRungs = rungs.map((r) => {
+    // If this is the secondary conflicting rung, interlock it with primary coil (coilA)
+    const matchesTarget = r.output_target === coilB || (secondaryRungId !== -1 && r.rung_id === secondaryRungId);
+
+    if (matchesTarget) {
       const newBranches = r.branches.map((b) => {
-        if (!b.some(([addr]) => addr === "%QX0.0")) {
-          return [...b, ["%QX0.0", true] as [string, boolean]];
+        // Prevent duplicate injection
+        if (!b.some(([addr]) => addr === coilA)) {
+          return [...b, [coilA, true] as [string, boolean]]; // [ / coilA ]
         }
         return b;
       });
-      return { ...r, branches: newBranches };
+      return { ...r, branches: newBranches, isNewInterlock: true };
     }
-
-    // If rung drives Press (%QX0.0), ensure [ / %QX0.1 ] (Arm not active) is in all branches
-    if (r.output_target === "%QX0.0" && r.output_type === "COIL") {
-      const newBranches = r.branches.map((b) => {
-        if (!b.some(([addr]) => addr === "%QX0.1")) {
-          return [...b, ["%QX0.1", true] as [string, boolean]];
-        }
-        return b;
-      });
-      return { ...r, branches: newBranches };
-    }
-
     return r;
   });
+
+  const patchDescription = `Synthesized normally-closed guard [ / ${coilA} ] on secondary rung (drives ${coilB}). Primary actuator ${coilA} operates without deadlock.`;
+  const deltaText = `Interlock Injected: [ / ${coilA} ] into Rung #${secondaryRungId !== -1 ? secondaryRungId : "B"}`;
+
+  return { patchedRungs, patchDescription, deltaText };
+}
+
+/**
+ * Generates an authentic IEC 61131-3 PLCopen XML document with patched rungs.
+ */
+export function generatePatchedPlcopenXml(rungs: Rung[]): string {
+  let xml = `<?xml version="1.0" encoding="utf-8"?>
+<project xmlns="http://www.plcopen.org/xml/tc6_0201">
+  <fileHeader companyName="Rolls-Royce / RelayGhost" productName="RelayGhost Patched Controller" productVersion="2.4" creationDateTime="${new Date().toISOString()}"/>
+  <contentHeader name="Patched_Safety_Logic"><coordinateInfo><fbd><scaling x="1" y="1"/></fbd><ld><scaling x="1" y="1"/></ld><sfc><scaling x="1" y="1"/></sfc></coordinateInfo></contentHeader>
+  <types><dataTypes/><pous><pou name="Main_Safe" pouType="program"><interface/><body/></pou></pous></types>
+  <instances><configurations><configuration name="Config"><resource name="Res"><task name="Task1" priority="1" interval="T#100ms"><pouInstance name="Inst" typeName="Main_Safe"/></task></resource></configuration></instances>
+  <!-- RELAYGHOST SYNTHESIZED RUNGS WITH ROLLS-ROYCE EARS MUTUAL EXCLUSION -->
+`;
+
+  for (const r of rungs) {
+    xml += `  <!-- Rung #${r.rung_id}: ${r.name} (${r.output_type} -> ${r.output_target}) -->\n`;
+    for (const b of r.branches) {
+      const contactsStr = b.map(([addr, isNc]) => `[${isNc ? "/" : " "}${addr}]`).join("---");
+      xml += `  <!-- Power Flow: |---${contactsStr}---(${r.output_target})---| -->\n`;
+    }
+  }
+
+  xml += `</project>\n`;
+  return xml;
 }

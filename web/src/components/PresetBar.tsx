@@ -38,13 +38,27 @@ export default function PresetBar({
     e.target.value = "";
   };
 
+  const handleDownloadSample = () => {
+    // Provide Mystery Gamma as an instant sample file to test custom uploading
+    const sample = BENCHMARKS.find((b) => b.id.includes("mystery_gamma")) || BENCHMARKS[0];
+    const blob = new Blob([sample.xml], { type: "application/xml" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "sample_mystery_gamma_plc.xml";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="bg-slate-900/90 border border-slate-800 rounded-lg p-3 space-y-3 shadow-lg">
       <div className="flex flex-wrap items-center justify-between gap-3">
         {/* Preset Hero Buttons */}
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-[11px] font-mono uppercase tracking-wider text-slate-400 font-semibold mr-1">
-            Presets:
+            Hero Presets:
           </span>
 
           <button
@@ -88,13 +102,14 @@ export default function PresetBar({
             disabled={isLoading}
             className="px-3.5 py-1.5 rounded bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-mono text-xs font-bold border border-emerald-400 active:scale-95 transition shadow-[0_0_15px_rgba(16,185,129,0.4)] animate-pulse flex items-center space-x-1.5"
           >
-            <span>⚡ Synthesize EARS Interlock & Re-Verify</span>
+            <span>⚡ Synthesize Dynamic EARS Interlock</span>
           </button>
         )}
       </div>
 
-      {/* Second Row: Benchmark Suite Selector + Custom File Upload */}
+      {/* Second Row: Benchmark Suite Selector + Custom File Upload + Quick Download */}
       <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-800/80 text-xs font-mono">
+        {/* Dropdown of all 10 benchmarks */}
         <div className="flex items-center space-x-2 flex-1 min-w-[280px]">
           <span className="text-slate-400 text-[11px] uppercase tracking-wider">
             All 10 Benchmarks:
@@ -119,10 +134,30 @@ export default function PresetBar({
               ))}
             </optgroup>
           </select>
+
+          <a
+            href="https://github.com/Ashuraj-Herode22/relayghost/tree/main/plc-benchmarks"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[11px] text-cyan-400 hover:text-cyan-300 underline flex items-center space-x-1 ml-2 whitespace-nowrap"
+            title="Open raw benchmark files in GitHub repository"
+          >
+            <span>📂 GitHub Benchmarks</span>
+            <span>↗</span>
+          </a>
         </div>
 
-        {/* Upload Custom XML */}
+        {/* Upload Custom XML & Download Sample */}
         <div className="flex items-center space-x-2">
+          {/* Quick sample downloader to test upload */}
+          <button
+            onClick={handleDownloadSample}
+            className="px-2.5 py-1.5 bg-slate-950 hover:bg-slate-800 text-amber-300 border border-amber-500/40 rounded flex items-center space-x-1 transition active:scale-95 text-[11px]"
+            title="Download sample XML to immediately test the uploader"
+          >
+            <span>📥 Sample .xml</span>
+          </button>
+
           <input
             type="file"
             ref={fileInputRef}

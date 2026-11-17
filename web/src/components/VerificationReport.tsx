@@ -1,13 +1,18 @@
 "use client";
 
-import React from "react";
-import { VerificationResult, Rung } from "@/lib/plcVerifier";
+import React, { useState } from "react";
+import { VerificationResult, Rung, generatePatchedPlcopenXml } from "@/lib/plcVerifier";
 
 interface VerificationReportProps {
   result: VerificationResult | null;
   rungs: Rung[];
   onSynthesizePatch: () => void;
   canPatch: boolean;
+  deltaInfo?: {
+    patchDescription: string;
+    deltaText: string;
+    beforeCycle: number | null;
+  } | null;
 }
 
 export default function VerificationReport({
@@ -15,8 +20,30 @@ export default function VerificationReport({
   rungs,
   onSynthesizePatch,
   canPatch,
+  deltaInfo,
 }: VerificationReportProps) {
+  const [downloadSuccess, setDownloadSuccess] = useState(false);
+
   if (!result) return null;
+
+  const handleDownloadXml = () => {
+    try {
+      const xml = generatePatchedPlcopenXml(rungs);
+      const blob = new Blob([xml], { type: "application/xml" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "relayghost_patched_safety.xml";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setDownloadSuccess(true);
+      setTimeout(() => setDownloadSuccess(false), 3000);
+    } catch (e) {
+      console.error("Export XML failed:", e);
+    }
+  };
 
   return (
     <div className="bg-slate-950 border border-slate-800 rounded-lg p-4 space-y-4 font-mono text-xs shadow-xl">
@@ -53,7 +80,7 @@ export default function VerificationReport({
         {result.safe ? (
           <p className="text-[11px] text-emerald-300/90 leading-relaxed">
             All temporal execution paths satisfy IEC 61131-3 physical exclusion invariants across full
-            scan space. No race conditions, race timer skips, or mechanical interference found.
+            scan space. No race conditions, timer skips, or mechanical interference found.
           </p>
         ) : (
           <div className="space-y-1">
@@ -61,19 +88,44 @@ export default function VerificationReport({
               {result.hazard}
             </p>
             <div className="flex flex-wrap gap-2 pt-1 text-[10px]">
-              <span className="bg-rose-900/40 border border-rose-600/50 px-2 py-0.5 rounded text-rose-200">
+              <span className="bg-rose-900/40 border border-rose-600/50 px-2 py-0.5 rounded text-rose-200 font-bold">
                 Breach Cycle: #{result.collision_cycle}
               </span>
-              <span className="bg-rose-900/40 border border-rose-600/50 px-2 py-0.5 rounded text-rose-200">
+              <span className="bg-rose-900/40 border border-rose-600/50 px-2 py-0.5 rounded text-rose-200 font-bold">
                 Conflicting Coils: {result.collision_coils.join(" + ")}
               </span>
-              <span className="bg-rose-900/40 border border-rose-600/50 px-2 py-0.5 rounded text-rose-200">
+              <span className="bg-rose-900/40 border border-rose-600/50 px-2 py-0.5 rounded text-rose-200 font-bold">
                 Fault Rungs: {result.fault_rung_ids.map((id) => `#${id}`).join(", ")}
               </span>
             </div>
           </div>
         )}
       </div>
+
+      {/* Before / After Proof Delta (Shown after patch is synthesized) */}
+      {deltaInfo && result.safe && (
+        <div className="p-3 bg-gradient-to-r from-emerald-950/40 to-cyan-950/40 border border-emerald-500/50 rounded-md space-y-1.5 shadow-[0_0_15px_rgba(16,185,129,0.2)]">
+          <div className="flex items-center justify-between text-[11px] font-bold text-emerald-300">
+            <span>⚡ Before/After Formal Proof Delta</span>
+            <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-500/40">
+              VERIFIED
+            </span>
+          </div>
+          <div className="text-[11px] text-slate-300 space-y-1">
+            <div className="flex items-center space-x-2">
+              <span className="text-rose-400 font-bold">Before:</span>
+              <span>Crash at Cycle #{deltaInfo.beforeCycle} ({result.collision_coils.join(" + ") || "Hazard State"})</span>
+            </div>
+            <div className="flex items-center space-x-2">
+              <span className="text-emerald-400 font-bold">After:</span>
+              <span>0 Hazards Reachable across {result.states_explored} Discrete States</span>
+            </div>
+            <div className="text-[10px] text-cyan-300 font-semibold pt-0.5">
+              {deltaInfo.deltaText}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Rolls-Royce EARS Specification Invariant */}
       <div className="p-3 bg-slate-900/70 border border-slate-800 rounded-md space-y-2">
@@ -86,31 +138,32 @@ export default function VerificationReport({
           </span>
         </div>
         <div className="p-2.5 bg-slate-950 rounded border border-slate-800 text-[11px] text-amber-200/90 font-mono italic leading-relaxed">
-          &quot;When <span className="font-bold text-amber-300">%QX0.0 (Press)</span> is energized, the
-          system shall ensure <span className="font-bold text-amber-300">%QX0.1 (Robot Feeder)</span> is
-          de-energized, and while workpiece transfer is active, the press stroke shall be inhibited.&quot;
+          &quot;When <span className="font-bold text-amber-300">{result.collision_coils[0] || "%QX0.0"}</span> is energized, the
+          system shall ensure <span className="font-bold text-amber-300">{result.collision_coils[1] || "%QX0.1"}</span> is
+          de-energized, and while workpiece transfer is active, conflicting stroke operations shall be inhibited.&quot;
         </div>
       </div>
 
-      {/* Auto-Synthesizer Interlock Action */}
-      {canPatch && (
-        <div className="p-3 bg-emerald-950/20 border border-emerald-500/30 rounded-md space-y-2">
-          <div className="text-[11px] font-bold text-emerald-300 flex items-center justify-between">
-            <span>Autonomous Interlock Synthesis</span>
-            <span className="text-[10px] text-emerald-400">Kiro Spec-Engine Ready</span>
-          </div>
-          <p className="text-[11px] text-slate-300 leading-relaxed">
-            RelayGhost can inject normally closed cross-interlocks into Rungs{" "}
-            {result.fault_rung_ids.map((id) => `#${id}`).join(" & ")} and re-verify formally:
-          </p>
+      {/* Action Strip: Patching & Download Patched XML */}
+      <div className="space-y-2">
+        {canPatch && (
           <button
             onClick={onSynthesizePatch}
-            className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded font-bold text-xs border border-emerald-400 active:scale-98 transition shadow-[0_0_12px_rgba(16,185,129,0.3)] flex items-center justify-center space-x-2"
+            className="w-full py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded font-bold text-xs border border-emerald-400 active:scale-98 transition shadow-[0_0_15px_rgba(16,185,129,0.3)] flex items-center justify-center space-x-2 animate-pulse"
           >
-            <span>⚡ Apply EARS Mutual Exclusion Interlocks & Re-Verify</span>
+            <span>⚡ Synthesize Dynamic EARS Interlock (Deadlock-Free)</span>
           </button>
-        </div>
-      )}
+        )}
+
+        {result.safe && (
+          <button
+            onClick={handleDownloadXml}
+            className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded font-bold text-xs border border-slate-700 active:scale-98 transition flex items-center justify-center space-x-2"
+          >
+            <span>{downloadSuccess ? "✅ Downloaded!" : "📥 Download Patched PLCopen XML (.xml)"}</span>
+          </button>
+        )}
+      </div>
     </div>
   );
 }

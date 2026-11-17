@@ -25,24 +25,31 @@ export default function Home() {
   const [verificationResult, setVerificationResult] = useState<VerificationResult | null>(null);
   const [currentFrameIndex, setCurrentFrameIndex] = useState<number>(0);
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [sourceName, setSourceName] = useState<string>(
     "Preset 1: Stamping Press Missing Interlock"
   );
+  const [deltaInfo, setDeltaInfo] = useState<{
+    patchDescription: string;
+    deltaText: string;
+    beforeCycle: number | null;
+  } | null>(null);
 
   // Load and verify a preset or XML string
   const loadAndVerify = (xml: string, label: string) => {
     setIsLoading(true);
+    setErrorMessage(null);
+    setDeltaInfo(null);
     try {
       const rungs = parsePlcopenXml(xml);
       setCurrentRungs(rungs);
       const result = executeModelChecker(rungs);
       setVerificationResult(result);
-      // Auto-seek to crash frame if hazard, or frame 0 if safe
-      const initialFrame = !result.safe && result.trace.length > 0 ? result.trace.length - 1 : 0;
-      setCurrentFrameIndex(initialFrame);
+      setCurrentFrameIndex(0);
       setSourceName(label);
     } catch (err: any) {
       console.error("Verification failed:", err);
+      setErrorMessage(err.message || "Failed to parse or verify PLCopen XML.");
     } finally {
       setIsLoading(false);
     }
@@ -69,18 +76,36 @@ export default function Home() {
     loadAndVerify(xmlContent, `Uploaded File: ${fileName}`);
   };
 
+  // Dynamic, Deadlock-Free Interlock Synthesis
   const handleSynthesizePatch = () => {
-    if (!currentRungs.length) return;
+    if (!currentRungs.length || !verificationResult) return;
     setIsLoading(true);
     try {
-      const patched = patchLadderLogicWithInterlocks(currentRungs);
-      setCurrentRungs(patched);
-      const result = executeModelChecker(patched);
+      const collisionCoils = verificationResult.collision_coils.length > 0
+        ? verificationResult.collision_coils
+        : ["%QX0.0", "%QX0.1"];
+      const faultRungs = verificationResult.fault_rung_ids;
+      const beforeCycle = verificationResult.collision_cycle;
+
+      const { patchedRungs, patchDescription, deltaText } = patchLadderLogicWithInterlocks(
+        currentRungs,
+        collisionCoils,
+        faultRungs
+      );
+
+      setCurrentRungs(patchedRungs);
+      const result = executeModelChecker(patchedRungs);
       setVerificationResult(result);
       setCurrentFrameIndex(0);
       setSourceName(`${sourceName} [Patched with EARS Interlocks]`);
-    } catch (err) {
+      setDeltaInfo({
+        patchDescription,
+        deltaText,
+        beforeCycle,
+      });
+    } catch (err: any) {
       console.error("Patching error:", err);
+      setErrorMessage(err.message || "Failed to synthesize interlocks.");
     } finally {
       setIsLoading(false);
     }
@@ -143,6 +168,22 @@ export default function Home() {
 
       {/* Main Workspace */}
       <main className="flex-1 p-4 lg:p-6 space-y-4 max-w-[1680px] w-full mx-auto">
+        {/* Error Banner if invalid XML */}
+        {errorMessage && (
+          <div className="p-3 bg-rose-950/80 border border-rose-500 rounded-lg text-xs font-mono text-rose-200 flex items-center justify-between shadow-xl">
+            <span className="flex items-center space-x-2">
+              <span>⚠️</span>
+              <span>{errorMessage}</span>
+            </span>
+            <button
+              onClick={() => setErrorMessage(null)}
+              className="text-rose-400 hover:text-white font-bold ml-4"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         {/* Preset & Benchmark Control Strip */}
         <PresetBar
           selectedPresetId={selectedPresetId}
@@ -203,6 +244,7 @@ export default function Home() {
               rungs={currentRungs}
               onSynthesizePatch={handleSynthesizePatch}
               canPatch={Boolean(verificationResult && !verificationResult.safe)}
+              deltaInfo={deltaInfo}
             />
           </div>
         </div>

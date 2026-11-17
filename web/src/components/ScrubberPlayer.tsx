@@ -14,8 +14,9 @@ export default function ScrubberPlayer({
   currentFrameIndex,
   onFrameChange,
 }: ScrubberPlayerProps) {
-  const [isPlaying, setIsPlaying] = useState<boolean>(false);
-  const [slowMo, setSlowMo] = useState<boolean>(true); // Default to 0.25x slow-mo for dramatic crash inspection
+  const [isPlaying, setIsPlaying] = useState<boolean>(true); // Auto-play enabled by default
+  const [slowMo, setSlowMo] = useState<boolean>(true); // 0.25x slow-motion for dramatic crash inspection
+  const [loopCrash, setLoopCrash] = useState<boolean>(true); // Auto-loop crash clip
 
   const trace = result?.trace || [];
   const maxFrames = Math.max(0, trace.length - 1);
@@ -25,14 +26,25 @@ export default function ScrubberPlayer({
     isHazard && currentFrameIndex === maxFrames && result?.collision_cycle !== null
   );
 
-  // Playback timer loop
+  // Auto-start slow-mo loop when a new result arrives
+  useEffect(() => {
+    if (result && trace.length > 0) {
+      setIsPlaying(true);
+      onFrameChange(0);
+    }
+  }, [result]);
+
+  // Playback timer loop with auto-looping crash highlight
   useEffect(() => {
     if (!isPlaying || maxFrames === 0) return;
 
-    const intervalMs = slowMo ? 800 : 250; // 0.25x slow-motion vs 1x
+    const intervalMs = slowMo ? 750 : 250; // 0.25x slow-motion vs 1.0x
     const timer = setInterval(() => {
       onFrameChange((prev) => {
         if (prev >= maxFrames) {
+          if (loopCrash) {
+            return 0; // Seamless video-like crash replay loop
+          }
           setIsPlaying(false);
           return maxFrames;
         }
@@ -41,7 +53,7 @@ export default function ScrubberPlayer({
     }, intervalMs);
 
     return () => clearInterval(timer);
-  }, [isPlaying, maxFrames, slowMo, onFrameChange]);
+  }, [isPlaying, maxFrames, slowMo, loopCrash, onFrameChange]);
 
   if (!result || trace.length === 0) {
     return (
@@ -84,19 +96,26 @@ export default function ScrubberPlayer({
           ) : (
             <span className="flex items-center text-xs font-mono font-bold text-rose-400 bg-rose-950/50 border border-rose-500/60 px-2.5 py-1 rounded animate-pulse">
               <span className="w-2 h-2 rounded-full bg-rose-500 mr-2" />
-              HAZARD BREACH AT CYCLE #{result.collision_cycle} (
+              HAZARD AT CYCLE #{result.collision_cycle} (
               {result.collision_coils.join(" + ")})
             </span>
           )}
         </div>
 
-        <div className="text-xs font-mono text-slate-400">
-          Cycle <span className="text-white font-bold">{currentFrame?.cycle ?? 0}</span> /{" "}
-          <span>{trace[maxFrames]?.cycle ?? 0}</span> ({currentFrame?.timestamp_ms ?? 0} ms)
+        <div className="text-xs font-mono text-slate-400 flex items-center space-x-2">
+          {isHazard && (
+            <span className="text-[10px] bg-rose-900/40 text-rose-300 border border-rose-600/40 px-1.5 py-0.5 rounded font-bold uppercase">
+              Isolated Replay Loop
+            </span>
+          )}
+          <span>
+            Cycle <span className="text-white font-bold">{currentFrame?.cycle ?? 0}</span> /{" "}
+            <span>{trace[maxFrames]?.cycle ?? 0}</span> ({currentFrame?.timestamp_ms ?? 0} ms)
+          </span>
         </div>
       </div>
 
-      {/* Scrubber Range Slider & Timeline Dots */}
+      {/* Scrubber Range Slider */}
       <div className="space-y-1.5">
         <div className="relative flex items-center">
           <input
@@ -176,19 +195,14 @@ export default function ScrubberPlayer({
 
           {/* Play / Pause */}
           <button
-            onClick={() => {
-              if (currentFrameIndex >= maxFrames) {
-                onFrameChange(0);
-              }
-              setIsPlaying(!isPlaying);
-            }}
+            onClick={() => setIsPlaying(!isPlaying)}
             className={`px-4 py-1.5 rounded font-bold transition active:scale-95 shadow ${
               isPlaying
                 ? "bg-amber-600 hover:bg-amber-500 text-white"
                 : "bg-emerald-600 hover:bg-emerald-500 text-white"
             }`}
           >
-            {isPlaying ? "⏸ Pause" : currentFrameIndex >= maxFrames ? "🔄 Replay" : "▶ Play"}
+            {isPlaying ? "⏸ Pause" : "▶ Play Loop"}
           </button>
 
           {/* Step Forward */}
@@ -202,8 +216,21 @@ export default function ScrubberPlayer({
           </button>
         </div>
 
-        {/* Speed & Jump to Hazard */}
+        {/* Speed, Auto-Loop Toggle & Jump to Hazard */}
         <div className="flex items-center space-x-2 font-mono text-xs">
+          {/* Loop toggle */}
+          <button
+            onClick={() => setLoopCrash(!loopCrash)}
+            className={`px-2 py-1.5 rounded border transition text-[11px] ${
+              loopCrash
+                ? "bg-cyan-950/60 border-cyan-500/60 text-cyan-300"
+                : "bg-slate-800 border-slate-700 text-slate-400"
+            }`}
+            title="Auto-repeat replay in loop"
+          >
+            🔁 {loopCrash ? "Loop On" : "Once"}
+          </button>
+
           {/* Slow-mo toggle */}
           <button
             onClick={() => setSlowMo(!slowMo)}
@@ -221,10 +248,10 @@ export default function ScrubberPlayer({
           {isHazard && (
             <button
               onClick={handleJumpToHazard}
-              className="px-3 py-1.5 bg-rose-600/90 hover:bg-rose-500 text-white rounded font-bold border border-rose-400 active:scale-95 transition shadow-[0_0_12px_rgba(244,63,94,0.4)] animate-pulse"
+              className="px-3 py-1.5 bg-rose-600/90 hover:bg-rose-500 text-white rounded font-bold border border-rose-400 active:scale-95 transition shadow-[0_0_12px_rgba(244,63,94,0.4)]"
               title="Jump directly to crash cycle"
             >
-              ⚠ Jump to Hazard
+              ⚠ Hazard Frame
             </button>
           )}
         </div>

@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { parsePlcopenXml, executeModelChecker, Rung } from "@/lib/plcVerifier";
 import { BENCHMARKS } from "@/lib/benchmarkPresets";
-import fs from "fs";
-import path from "path";
 
 const PRESET_INDEX_MAP: Record<string, string> = {
   "1": "known-errors/01_stamping_press_missing_interlock.xml",
@@ -30,12 +28,21 @@ export async function POST(req: NextRequest) {
       if (found) {
         rungs = parsePlcopenXml(found.xml);
       } else {
-        // Fallback to disk if running locally
-        const fullPath = path.resolve(process.cwd(), "..", "plc-benchmarks", targetId);
-        if (fs.existsSync(fullPath)) {
-          const xml = fs.readFileSync(fullPath, "utf-8");
-          rungs = parsePlcopenXml(xml);
-        } else {
+        // Safe local disk fallback with try/catch
+        try {
+          const fs = await import("fs");
+          const path = await import("path");
+          const fullPath = path.resolve(process.cwd(), "..", "plc-benchmarks", targetId);
+          if (fs.existsSync(fullPath)) {
+            const xml = fs.readFileSync(fullPath, "utf-8");
+            rungs = parsePlcopenXml(xml);
+          } else {
+            return NextResponse.json(
+              { error: `Preset benchmark '${targetId}' not found in presets or disk` },
+              { status: 404 }
+            );
+          }
+        } catch {
           return NextResponse.json(
             { error: `Preset benchmark '${targetId}' not found` },
             { status: 404 }

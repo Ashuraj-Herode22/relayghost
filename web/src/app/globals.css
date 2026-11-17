@@ -27,6 +27,11 @@ body {
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
 }
 
+.scanlines {
+  pointer-events: none !important;
+  opacity: 0.03 !important;
+}
+
 .pulse-hazard {
   animation: pulse-hazard-anim 1.2s infinite ease-in-out;
 }

@@ -9,6 +9,7 @@ import sys
 import os
 import json
 from pathlib import Path
+from typing import Optional, Dict, Any, List
 
 # Robust root path resolution so Kiro can invoke from any working directory
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -17,15 +18,21 @@ from engine.plc_parser import parse_plc_file
 from engine.plc_model_checker import TemporalModelChecker, PLCState
 
 
-def verify_file(file_path: str, max_depth: int = 20) -> int:
+def verify_file(file_path: str, max_depth: int = 20, json_output: bool = False) -> int:
     if not os.path.exists(file_path):
-        print(f"❌ Error: File not found: {file_path}", file=sys.stderr)
+        if json_output:
+            print(json.dumps({"error": f"File not found: {file_path}", "safe": False}))
+        else:
+            print(f"❌ Error: File not found: {file_path}", file=sys.stderr)
         return 2
 
     try:
         rungs, metadata = parse_plc_file(file_path)
     except Exception as e:
-        print(f"❌ Error parsing PLC file {file_path}: {e}", file=sys.stderr)
+        if json_output:
+            print(json.dumps({"error": f"Error parsing PLC file {file_path}: {e}", "safe": False}))
+        else:
+            print(f"❌ Error parsing PLC file {file_path}: {e}", file=sys.stderr)
         return 2
 
     checker = TemporalModelChecker(scan_cycle_ms=100)
@@ -49,6 +56,10 @@ def verify_file(file_path: str, max_depth: int = 20) -> int:
     ]
 
     result = checker.explore_temporal_state_space(init_state, candidate_inputs, max_depth=max_depth)
+
+    if json_output:
+        print(json.dumps(result))
+        return 0 if result["safe"] else 1
 
     # Output formatted JSON payload for integration and Kiro consumption
     print(f"\n=======================================================")
@@ -78,8 +89,9 @@ def verify_file(file_path: str, max_depth: int = 20) -> int:
 
 def resolve_file_path() -> Optional[str]:
     """Resolves target file path from CLI argument or Kiro STDIN JSON."""
-    if len(sys.argv) > 1:
-        return sys.argv[1]
+    args = [a for a in sys.argv[1:] if a != "--json"]
+    if args:
+        return args[0]
 
     # Check STDIN for Kiro hook JSON payload
     if not sys.stdin.isatty():
@@ -102,10 +114,11 @@ def resolve_file_path() -> Optional[str]:
 
 
 if __name__ == "__main__":
+    is_json = "--json" in sys.argv
     target_file = resolve_file_path()
     if not target_file:
-        print("Usage: python3 engine/verify_cli.py <path_to_plc_file> (or pipe JSON to STDIN)")
+        print("Usage: python3 engine/verify_cli.py <path_to_plc_file> [--json] (or pipe JSON to STDIN)")
         sys.exit(2)
 
-    exit_code = verify_file(target_file)
+    exit_code = verify_file(target_file, json_output=is_json)
     sys.exit(exit_code)
