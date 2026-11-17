@@ -140,9 +140,9 @@ export default function PresetBar({
             target="_blank"
             rel="noopener noreferrer"
             className="text-[11px] text-cyan-400 hover:text-cyan-300 underline flex items-center space-x-1 ml-2 whitespace-nowrap"
-            title="Open raw benchmark files in GitHub repository"
+            title="Benchmark Suite: Download sample IEC 61131-3 PLCopen XML programs from plc-benchmarks/ (known-errors/ and test-for-yourself/) to test temporal model checking"
           >
-            <span>📂 GitHub Benchmarks</span>
+            <span>📂 Benchmark Suite</span>
             <span>↗</span>
           </a>
         </div>
@@ -153,7 +153,7 @@ export default function PresetBar({
           <button
             onClick={handleDownloadSample}
             className="px-2.5 py-1.5 bg-slate-950 hover:bg-slate-800 text-amber-300 border border-amber-500/40 rounded flex items-center space-x-1 transition active:scale-95 text-[11px]"
-            title="Download sample XML to immediately test the uploader"
+            title="Download sample IEC 61131-3 PLCopen XML program to test custom verification pipeline"
           >
             <span>📥 Sample .xml</span>
           </button>

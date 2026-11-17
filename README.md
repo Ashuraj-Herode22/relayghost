@@ -88,6 +88,8 @@ To ensure any PLCopen XML file animates seamlessly in a 3D digital twin, RelayGh
 
 ## 📊 Benchmark Verification Suite (10 Real PLC Programs)
 
+> **Benchmark Suite for Industrial Automation & Control Engineers:** Download sample IEC 61131-3 PLCopen XML programs directly from `plc-benchmarks/` (`known-errors/` and `test-for-yourself/`) to test temporal model checking across real factory machines.
+
 The verification engine was executed across 10 authentic IEC 61131-3 PLCopen XML programs, achieving **100% mathematical parity** between Python and TypeScript:
 
 | Benchmark File Path | Expected Result | Actual Result | Verification Status |
@@ -107,13 +109,20 @@ The verification engine was executed across 10 authentic IEC 61131-3 PLCopen XML
 
 ## ⚡ Quick Start
 
+### Prerequisites
+- **Python 3.10+** (Standard libraries + `mcp` package)
+- **Node.js 18+** / npm (for Next.js 15 SCADA Command Center)
+
 ### 1. Run Verification in Terminal
 ```bash
 # Clone the repository
 git clone https://github.com/Ashuraj-Herode22/relayghost.git
 cd relayghost
 
-# Run the test suite
+# Optional: Enable tracked pre-commit safety gate
+git config core.hooksPath .githooks
+
+# Run the temporal race condition verification test suite
 python3 -m engine.tests.test_temporal_race
 
 # Audit any benchmark file via CLI

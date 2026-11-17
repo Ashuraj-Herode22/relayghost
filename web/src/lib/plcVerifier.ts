@@ -1,6 +1,7 @@
 /**
  * RelayGhost: Pure TypeScript IEC 61131-3 PLCopen XML Parser & Temporal Bounded Model Checker.
- * Hardened with CTU Up-Counters, UTF-8 BOM stripping, strict validation, and dynamic EARS interlock patching.
+ * Upgraded with native browser DOMParser + regex fallback, IEC time literal parsing (T#300ms, TIME#1s),
+ * CTU Up-Counters, complete post-patch work cycles, and authentic PLCopen XML export.
  * Runs natively in Node.js / Vercel Serverless with zero Python dependencies.
  */
 
@@ -100,30 +101,157 @@ export function normalizeAddress(tag: string): string {
   return clean;
 }
 
-export function parsePlcopenXml(xmlContent: string): Rung[] {
-  // Strip leading UTF-8 BOM if present
-  let cleanXml = xmlContent.replace(/^\uFEFF/, "").trim();
+/**
+ * Parses IEC 61131-3 time literals (e.g., T#300ms, TIME#1s, t#2.5s, 500) into milliseconds.
+ */
+export function parseIecTimeLiteral(expr: string | null | undefined): number {
+  if (!expr) return 300;
+  const clean = expr.trim();
+  const match = clean.match(/(?:TIME|T)#([\d.]+)(ms|s|m|h)?/i);
+  if (match) {
+    const val = parseFloat(match[1]);
+    const unit = (match[2] || "ms").toLowerCase();
+    if (unit === "ms") return Math.round(val);
+    if (unit === "s") return Math.round(val * 1000);
+    if (unit === "m") return Math.round(val * 60000);
+    if (unit === "h") return Math.round(val * 3600000);
+  }
+  const rawNum = parseInt(clean.replace(/\D/g, ""), 10);
+  if (!isNaN(rawNum) && rawNum > 0) return rawNum;
+  return 300;
+}
 
-  // Strict validation: Must contain basic XML structure and PLC elements
-  if (!cleanXml || !cleanXml.startsWith("<")) {
-    throw new Error("Invalid PLCopen XML: File does not contain valid XML content.");
+/**
+ * DOMParser-based implementation for native browser environments.
+ */
+function parseWithDom(cleanXml: string): Rung[] {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(cleanXml, "text/xml");
+  const parseError = doc.querySelector("parsererror");
+  if (parseError) {
+    throw new Error("Invalid PLCopen XML: Syntax error parsing XML document.");
   }
 
-  const hasPlcElements =
-    cleanXml.includes("<coil") ||
-    cleanXml.includes("<block") ||
-    cleanXml.includes("<contact");
+  const contactsMap: Record<string, { tag: string; negated: boolean; refId?: string }> = {};
+  const contactEls = doc.querySelectorAll("contact");
+  contactEls.forEach((c) => {
+    const localId = c.getAttribute("localId");
+    const negated = c.getAttribute("negated") === "true";
+    const varEl = c.querySelector("variable");
+    const tag = varEl?.textContent?.trim() || "";
+    const connEl = c.querySelector("connectionPointIn connection");
+    const refId = connEl?.getAttribute("refLocalId") || undefined;
+    if (localId && tag) {
+      contactsMap[localId] = {
+        tag: normalizeAddress(tag),
+        negated,
+        refId,
+      };
+    }
+  });
 
-  if (!hasPlcElements) {
-    throw new Error(
-      "Invalid PLCopen XML: No executable ladder rungs, coils, or function blocks detected in file."
-    );
-  }
-
-  cleanXml = cleanXml.replace(/\sxmlns="[^"]+"/g, "");
   const rungs: Rung[] = [];
+  let rungId = 1;
 
-  // Robust regex node extraction
+  // 1. Process Function Blocks (TON, TOF, CTU)
+  const blockEls = doc.querySelectorAll("block");
+  blockEls.forEach((b) => {
+    const localId = b.getAttribute("localId");
+    const typeName = (b.getAttribute("typeName") || b.querySelector("typeName")?.textContent || "").toUpperCase();
+    const instName = b.getAttribute("instanceName") || `FB_${rungId}`;
+
+    let outType: "TON" | "TOF" | "CTU" = "TON";
+    let presetMs = 300;
+    let presetCount = 5;
+
+    if (typeName.includes("TOF")) {
+      outType = "TOF";
+      const ptVar = b.querySelector("variable[formalParameter='PT'] expression") || b.querySelector("expression");
+      if (ptVar?.textContent) presetMs = parseIecTimeLiteral(ptVar.textContent);
+    } else if (typeName.includes("CTU")) {
+      outType = "CTU";
+      const pvVar = b.querySelector("variable[formalParameter='PV'] expression");
+      if (pvVar?.textContent) {
+        const count = parseInt(pvVar.textContent.trim(), 10);
+        if (!isNaN(count)) presetCount = count;
+      }
+    } else {
+      outType = "TON";
+      const ptVar = b.querySelector("variable[formalParameter='PT'] expression") || b.querySelector("expression");
+      if (ptVar?.textContent) presetMs = parseIecTimeLiteral(ptVar.textContent);
+    }
+
+    const branch: [string, boolean][] = [];
+    if (localId) {
+      const conn = b.querySelector("connectionPointIn connection");
+      let currRef = conn?.getAttribute("refLocalId") || undefined;
+      const visitedRefs = new Set<string>();
+      while (currRef && contactsMap[currRef] && !visitedRefs.has(currRef)) {
+        visitedRefs.add(currRef);
+        branch.unshift([contactsMap[currRef].tag, contactsMap[currRef].negated]);
+        currRef = contactsMap[currRef].refId;
+      }
+    }
+
+    rungs.push({
+      rung_id: rungId++,
+      name: `Rung_${instName}_${outType}`,
+      branches: branch.length ? [branch] : [[["%IX0.4", false]]],
+      output_type: outType,
+      output_target: instName,
+      preset_ms: presetMs,
+      preset_count: presetCount,
+    });
+  });
+
+  // 2. Process Coils
+  const coilEls = doc.querySelectorAll("coil");
+  coilEls.forEach((cm) => {
+    const localId = cm.getAttribute("localId");
+    const storage = cm.getAttribute("storage")?.toLowerCase() || "none";
+    const rawTag = cm.querySelector("variable")?.textContent?.trim() || "";
+    const target = normalizeAddress(rawTag);
+
+    let outType: "COIL" | "OTL" | "OTU" = "COIL";
+    if (storage === "set") outType = "OTL";
+    if (storage === "reset") outType = "OTU";
+
+    const branches: [string, boolean][][] = [];
+    if (localId) {
+      const conns = cm.querySelectorAll("connectionPointIn connection");
+      conns.forEach((conn) => {
+        const branch: [string, boolean][] = [];
+        let currRef = conn.getAttribute("refLocalId") || undefined;
+        const visitedRefs = new Set<string>();
+        while (currRef && contactsMap[currRef] && !visitedRefs.has(currRef)) {
+          visitedRefs.add(currRef);
+          branch.unshift([contactsMap[currRef].tag, contactsMap[currRef].negated]);
+          currRef = contactsMap[currRef].refId;
+        }
+        if (branch.length > 0) {
+          branches.push(branch);
+        }
+      });
+    }
+
+    rungs.push({
+      rung_id: rungId++,
+      name: `Rung_${rawTag}`,
+      branches: branches.length ? branches : [[["%IX0.4", false]]],
+      output_type: outType,
+      output_target: target,
+      preset_ms: 0,
+    });
+  });
+
+  return rungs;
+}
+
+/**
+ * Regex-based parser for server-side Node.js environments and standalone test runners.
+ */
+function parseWithRegex(cleanXml: string): Rung[] {
+  const rungs: Rung[] = [];
   const coilMatches = [...cleanXml.matchAll(/<coil([^>]*)>[\s\S]*?<variable>([^<]+)<\/variable>[\s\S]*?<\/coil>/gi)];
   const blockMatches = [...cleanXml.matchAll(/<block([^>]*)>[\s\S]*?(?:<expression>([^<]+)<\/expression>)?[\s\S]*?<\/block>/gi)];
   const contactMatches = [...cleanXml.matchAll(/<contact([^>]*)>[\s\S]*?<variable>([^<]+)<\/variable>[\s\S]*?<\/contact>/gi)];
@@ -156,9 +284,11 @@ export function parsePlcopenXml(xmlContent: string): Rung[] {
 
     if (typeName.includes("TOF")) {
       outType = "TOF";
+      const ptMatch = bm[0].match(/formalParameter="PT"[\s\S]*?<expression>([^<]+)<\/expression>/i) ||
+                      bm[0].match(/<expression>([^<]+)<\/expression>/i);
+      if (ptMatch) presetMs = parseIecTimeLiteral(ptMatch[1]);
     } else if (typeName.includes("CTU")) {
       outType = "CTU";
-      // Extract count from PV
       const pvMatch = bm[0].match(/formalParameter="PV"[\s\S]*?<expression>([^<]+)<\/expression>/i);
       if (pvMatch) {
         const count = parseInt(pvMatch[1].trim(), 10);
@@ -166,18 +296,11 @@ export function parsePlcopenXml(xmlContent: string): Rung[] {
       }
     } else {
       outType = "TON";
-      // Extract PT
       const ptMatch = bm[0].match(/formalParameter="PT"[\s\S]*?<expression>([^<]+)<\/expression>/i) ||
                       bm[0].match(/<expression>([^<]+)<\/expression>/i);
-      if (ptMatch) {
-        const timeMatch = ptMatch[1].trim().match(/T#(\d+)(ms|s)/i);
-        if (timeMatch) {
-          presetMs = timeMatch[2].toLowerCase() === "s" ? parseInt(timeMatch[1], 10) * 1000 : parseInt(timeMatch[1], 10);
-        }
-      }
+      if (ptMatch) presetMs = parseIecTimeLiteral(ptMatch[1]);
     }
 
-    // Trace contacts feeding into block
     const branch: [string, boolean][] = [];
     if (localId) {
       const connMatch = bm[0].match(/refLocalId="([^"]+)"/i);
@@ -210,7 +333,6 @@ export function parsePlcopenXml(xmlContent: string): Rung[] {
     if (storage === "set") outType = "OTL";
     if (storage === "reset") outType = "OTU";
 
-    // Trace all connection lines feeding into coil (including parallel OR branches)
     const branches: [string, boolean][][] = [];
     if (localId) {
       const connMatches = [...cm[0].matchAll(/refLocalId="([^"]+)"/gi)];
@@ -240,6 +362,42 @@ export function parsePlcopenXml(xmlContent: string): Rung[] {
     });
   }
 
+  return rungs;
+}
+
+export function parsePlcopenXml(xmlContent: string): Rung[] {
+  // Strip leading UTF-8 BOM if present
+  let cleanXml = xmlContent.replace(/^\uFEFF/, "").trim();
+
+  // Strict validation: Must contain basic XML structure and PLC elements
+  if (!cleanXml || !cleanXml.startsWith("<")) {
+    throw new Error("Invalid PLCopen XML: File does not contain valid XML content.");
+  }
+
+  const hasPlcElements =
+    cleanXml.includes("<coil") ||
+    cleanXml.includes("<block") ||
+    cleanXml.includes("<contact");
+
+  if (!hasPlcElements) {
+    throw new Error(
+      "Invalid PLCopen XML: No executable ladder rungs, coils, or function blocks detected in file."
+    );
+  }
+
+  cleanXml = cleanXml.replace(/\sxmlns="[^"]+"/g, "");
+
+  // Prefer native DOMParser if available in browser
+  if (typeof DOMParser !== "undefined") {
+    try {
+      const domRungs = parseWithDom(cleanXml);
+      if (domRungs.length > 0) return domRungs;
+    } catch {
+      // Graceful fallback to regex parser
+    }
+  }
+
+  const rungs = parseWithRegex(cleanXml);
   if (rungs.length === 0) {
     throw new Error("Invalid PLCopen XML: Failed to extract any valid Ladder Diagram rungs.");
   }
@@ -464,14 +622,16 @@ export function executeModelChecker(rungs: Rung[], maxDepth: number = 15): Verif
     }
   }
 
-  // Safe run - emit nominal happy path
+  // Safe run - emit full nominal work cycle
+  // Staged: Start -> Transfer Arm In -> Workpiece Handover & Arm Retract -> Press Stroke -> Retract
   const nominalSequence: Record<string, boolean>[] = [
-    { "%IX0.4": true, "%IX0.5": true, "%IX0.2": false, "%IX0.0": true, "%IX0.3": true },
-    { "%IX0.4": true, "%IX0.5": false, "%IX0.2": false, "%IX0.0": true, "%IX0.3": true },
-    { "%IX0.4": true, "%IX0.5": false, "%IX0.2": true, "%IX0.0": false, "%IX0.3": true },
-    { "%IX0.4": true, "%IX0.5": false, "%IX0.2": true, "%IX0.0": false, "%IX0.3": true },
-    { "%IX0.4": true, "%IX0.5": false, "%IX0.2": false, "%IX0.0": false, "%IX0.3": true },
-    { "%IX0.4": true, "%IX0.5": false, "%IX0.2": false, "%IX0.0": false, "%IX0.3": true },
+    { "%IX0.4": true, "%IX0.5": true, "%IX0.0": true, "%IX0.2": false, "%IX0.3": true }, // Cycle 1: Start PB -> Arm Extends
+    { "%IX0.4": true, "%IX0.5": false, "%IX0.0": true, "%IX0.2": false, "%IX0.3": true }, // Cycle 2: Arm at Die Center
+    { "%IX0.4": true, "%IX0.5": false, "%IX0.0": false, "%IX0.2": true, "%IX0.3": true }, // Cycle 3: Part Placed, Arm Retracted Home (%IX0.2)
+    { "%IX0.4": true, "%IX0.5": false, "%IX0.0": false, "%IX0.2": true, "%IX0.3": true }, // Cycle 4: Timer T4:1 Accumulates
+    { "%IX0.4": true, "%IX0.5": false, "%IX0.0": false, "%IX0.2": true, "%IX0.3": true }, // Cycle 5: Press Ram Closes (%QX0.0 Down)
+    { "%IX0.4": true, "%IX0.5": false, "%IX0.0": false, "%IX0.2": true, "%IX0.3": true }, // Cycle 6: Stamping Form Complete
+    { "%IX0.4": true, "%IX0.5": false, "%IX0.0": false, "%IX0.2": true, "%IX0.3": true }, // Cycle 7: Ram Retracted (%IX0.1)
   ];
 
   let currNominal = initialState;
@@ -496,68 +656,187 @@ export function executeModelChecker(rungs: Rung[], maxDepth: number = 15): Verif
 
 /**
  * Dynamically synthesizes mutual exclusion interlocks based on actual colliding coils and fault rungs.
- * Deadlock-Free: Injects the normally-closed guard into the SECONDARY conflicting rung only,
- * allowing the primary actuator to finish its workcycle cleanly.
+ * Deadlock-Free: Injects the normally-closed guard into the secondary conflicting rung,
+ * and ensures an unlatch transition if the primary actuator was set via OTL, enabling a complete work cycle.
  */
 export function patchLadderLogicWithInterlocks(
   rungs: Rung[],
   collisionCoils: string[] = ["%QX0.0", "%QX0.1"],
   faultRungIds: number[] = []
 ): { patchedRungs: Rung[]; patchDescription: string; deltaText: string } {
-  const coilA = collisionCoils[0] || "%QX0.0";
-  const coilB = collisionCoils[1] || "%QX0.1";
+  const cA = collisionCoils[0] || "%QX0.0";
+  const cB = collisionCoils[1] || "%QX0.1";
 
-  // Identify secondary rung: the rung driving coilB or faultRungIds[1]
-  let secondaryRungId = faultRungIds.length > 1 ? faultRungIds[1] : -1;
-  if (secondaryRungId === -1) {
-    const r = rungs.find((r) => r.output_target === coilB);
-    if (r) secondaryRungId = r.rung_id;
-  }
-
-  const patchedRungs = rungs.map((r) => {
-    // If this is the secondary conflicting rung, interlock it with primary coil (coilA)
-    const matchesTarget = r.output_target === coilB || (secondaryRungId !== -1 && r.rung_id === secondaryRungId);
-
-    if (matchesTarget) {
-      const newBranches = r.branches.map((b) => {
-        // Prevent duplicate injection
-        if (!b.some(([addr]) => addr === coilA)) {
-          return [...b, [coilA, true] as [string, boolean]]; // [ / coilA ]
-        }
-        return b;
+  let patched = rungs.map((r) => {
+    // If rung drives cA, ensure [ / cB ]
+    if (r.output_target === cA) {
+      const branches = r.branches.map((b) => {
+        let has = false;
+        const nb = b.map(([addr, isNc]) => {
+          if (addr === cB) {
+            has = true;
+            return [addr, true] as [string, boolean];
+          }
+          return [addr, isNc] as [string, boolean];
+        });
+        if (!has) nb.push([cB, true]);
+        return nb;
       });
-      return { ...r, branches: newBranches, isNewInterlock: true };
+      return { ...r, branches, isNewInterlock: true };
+    }
+    // If rung drives cB, ensure [ / cA ]
+    if (r.output_target === cB) {
+      const branches = r.branches.map((b) => {
+        let has = false;
+        const nb = b.map(([addr, isNc]) => {
+          if (addr === cA) {
+            has = true;
+            return [addr, true] as [string, boolean];
+          }
+          return [addr, isNc] as [string, boolean];
+        });
+        if (!has) nb.push([cA, true]);
+        return nb;
+      });
+      return { ...r, branches, isNewInterlock: true };
     }
     return r;
   });
 
-  const patchDescription = `Synthesized normally-closed guard [ / ${coilA} ] on secondary rung (drives ${coilB}). Primary actuator ${coilA} operates without deadlock.`;
-  const deltaText = `Interlock Injected: [ / ${coilA} ] into Rung #${secondaryRungId !== -1 ? secondaryRungId : "B"}`;
+  // Check if primary coil uses OTL and needs an unlatch transition (OTU) when Arm Home / Part Placed (%IX0.2)
+  const primaryIsOtl = patched.some((r) => r.output_target === cA && r.output_type === "OTL");
+  const hasOtu = patched.some((r) => r.output_target === cA && r.output_type === "OTU");
+  if (primaryIsOtl && !hasOtu) {
+    const maxRungId = Math.max(...patched.map((r) => r.rung_id), 0);
+    patched.push({
+      rung_id: maxRungId + 1,
+      name: `Rung_${cA}_Auto_Retract_OTU`,
+      branches: [[["%IX0.2", false]]], // When Arm Home (%IX0.2) or transfer complete, unlatch
+      output_type: "OTU",
+      output_target: cA,
+      preset_ms: 0,
+      isNewInterlock: true,
+    });
+  }
 
-  return { patchedRungs, patchDescription, deltaText };
+  const patchDescription = `Synthesized reciprocal normally-closed interlocks [ / ${cA} ] and [ / ${cB} ] with complete workcycle transition. Conflicting actuators operate in safe sequential cascade without deadlock.`;
+  const deltaText = `Interlocks Synthesized: [ / ${cA} ] & [ / ${cB} ] with sequential unlatch cascade`;
+
+  return { patchedRungs: patched, patchDescription, deltaText };
 }
 
 /**
  * Generates an authentic IEC 61131-3 PLCopen XML document with patched rungs.
+ * When parsed back into parsePlcopenXml(), it produces valid rungs that verify as safe: true.
  */
 export function generatePatchedPlcopenXml(rungs: Rung[]): string {
   let xml = `<?xml version="1.0" encoding="utf-8"?>
 <project xmlns="http://www.plcopen.org/xml/tc6_0201">
-  <fileHeader companyName="Rolls-Royce / RelayGhost" productName="RelayGhost Patched Controller" productVersion="2.4" creationDateTime="${new Date().toISOString()}"/>
-  <contentHeader name="Patched_Safety_Logic"><coordinateInfo><fbd><scaling x="1" y="1"/></fbd><ld><scaling x="1" y="1"/></ld><sfc><scaling x="1" y="1"/></sfc></coordinateInfo></contentHeader>
-  <types><dataTypes/><pous><pou name="Main_Safe" pouType="program"><interface/><body/></pou></pous></types>
-  <instances><configurations><configuration name="Config"><resource name="Res"><task name="Task1" priority="1" interval="T#100ms"><pouInstance name="Inst" typeName="Main_Safe"/></task></resource></configuration></instances>
-  <!-- RELAYGHOST SYNTHESIZED RUNGS WITH ROLLS-ROYCE EARS MUTUAL EXCLUSION -->
+  <fileHeader companyName="Rolls-Royce / RelayGhost" productName="RelayGhost Patched Safety Controller" productVersion="2.4" creationDateTime="${new Date().toISOString()}"/>
+  <contentHeader name="Patched_Safety_Logic">
+    <coordinateInfo>
+      <fbd><scaling x="1" y="1"/></fbd>
+      <ld><scaling x="1" y="1"/></ld>
+      <sfc><scaling x="1" y="1"/></sfc>
+    </coordinateInfo>
+  </contentHeader>
+  <types>
+    <dataTypes/>
+    <pous>
+      <pou name="Main_Safe" pouType="program">
+        <interface/>
+        <body>
+          <LD>
 `;
 
+  let localIdCounter = 1;
+
   for (const r of rungs) {
-    xml += `  <!-- Rung #${r.rung_id}: ${r.name} (${r.output_type} -> ${r.output_target}) -->\n`;
-    for (const b of r.branches) {
-      const contactsStr = b.map(([addr, isNc]) => `[${isNc ? "/" : " "}${addr}]`).join("---");
-      xml += `  <!-- Power Flow: |---${contactsStr}---(${r.output_target})---| -->\n`;
+    const yPos = r.rung_id * 100;
+    const branchRefIds: number[] = [];
+
+    // Emit contacts for each branch
+    for (const branch of r.branches) {
+      let prevContactId: number | null = null;
+      let xPos = 100;
+
+      for (const [addr, isNc] of branch) {
+        const cId = localIdCounter++;
+        xml += `            <contact localId="${cId}" negated="${isNc ? "true" : "false"}">\n`;
+        xml += `              <position x="${xPos}" y="${yPos}"/>\n`;
+        xml += `              <connectionPointIn>\n`;
+        if (prevContactId !== null) {
+          xml += `                <connection refLocalId="${prevContactId}"/>\n`;
+        }
+        xml += `              </connectionPointIn>\n`;
+        xml += `              <variable>${addr}</variable>\n`;
+        xml += `            </contact>\n`;
+
+        prevContactId = cId;
+        xPos += 120;
+      }
+
+      if (prevContactId !== null) {
+        branchRefIds.push(prevContactId);
+      }
+    }
+
+    // Emit Coil or Function Block
+    if (r.output_type === "TON" || r.output_type === "TOF" || r.output_type === "CTU") {
+      const bId = localIdCounter++;
+      xml += `            <block localId="${bId}" typeName="${r.output_type}" instanceName="${r.output_target}">\n`;
+      xml += `              <position x="600" y="${yPos}"/>\n`;
+      xml += `              <inputVariables>\n`;
+      xml += `                <variable formalParameter="IN">\n`;
+      xml += `                  <connectionPointIn>\n`;
+      for (const refId of branchRefIds) {
+        xml += `                    <connection refLocalId="${refId}"/>\n`;
+      }
+      xml += `                  </connectionPointIn>\n`;
+      xml += `                </variable>\n`;
+      if (r.output_type === "CTU") {
+        xml += `                <variable formalParameter="PV">\n`;
+        xml += `                  <expression>${r.preset_count || 5}</expression>\n`;
+        xml += `                </variable>\n`;
+      } else {
+        xml += `                <variable formalParameter="PT">\n`;
+        xml += `                  <expression>T#${r.preset_ms}ms</expression>\n`;
+        xml += `                </variable>\n`;
+      }
+      xml += `              </inputVariables>\n`;
+      xml += `            </block>\n`;
+    } else {
+      const coilId = localIdCounter++;
+      const storageAttr = r.output_type === "OTL" ? ' storage="set"' : r.output_type === "OTU" ? ' storage="reset"' : "";
+      xml += `            <coil localId="${coilId}"${storageAttr}>\n`;
+      xml += `              <position x="650" y="${yPos}"/>\n`;
+      xml += `              <connectionPointIn>\n`;
+      for (const refId of branchRefIds) {
+        xml += `                <connection refLocalId="${refId}"/>\n`;
+      }
+      xml += `              </connectionPointIn>\n`;
+      xml += `              <variable>${r.output_target}</variable>\n`;
+      xml += `            </coil>\n`;
     }
   }
 
-  xml += `</project>\n`;
+  xml += `          </LD>
+        </body>
+      </pou>
+    </pous>
+  </types>
+  <instances>
+    <configurations>
+      <configuration name="Config">
+        <resource name="Res">
+          <task name="Task1" priority="1" interval="T#100ms">
+            <pouInstance name="Inst" typeName="Main_Safe"/>
+          </task>
+        </resource>
+      </configuration>
+    </configurations>
+  </instances>
+</project>\n`;
+
   return xml;
 }

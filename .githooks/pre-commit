@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# RelayGhost Pre-Commit Gate: Verifies any staged PLCopen XML files before commit
+echo "🛡️ RelayGhost Pre-Commit Gate: Verifying staged PLC files against Rolls-Royce EARS invariants..."
+STAGED_XML=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(xml|plcopen)$')
+
+if [ -n "$STAGED_XML" ]; then
+  for file in $STAGED_XML; do
+    echo "🔍 Checking: $file"
+    python3 engine/verify_cli.py "$file"
+    EXIT_CODE=$?
+    if [ $EXIT_CODE -ne 0 ]; then
+      echo "❌ COMMIT BLOCKED: $file violated safety invariants! Fix ladder logic or synthesize interlocks before committing."
+      exit 1
+    fi
+  done
+fi
+
+echo "✅ All staged PLC files passed formal verification."
+exit 0

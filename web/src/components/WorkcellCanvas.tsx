@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import * as THREE from "three";
 import { ReplayFrame } from "@/lib/plcVerifier";
 
@@ -9,9 +9,139 @@ interface WorkcellCanvasProps {
   isCollision?: boolean;
 }
 
+/**
+ * Zero-dependency WebAudio Industrial Synthesizer
+ */
+class IndustrialAudioSynthesizer {
+  private ctx: AudioContext | null = null;
+  private muted: boolean = false;
+
+  public init() {
+    if (typeof window === "undefined") return;
+    if (!this.ctx) {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (AudioCtx) this.ctx = new AudioCtx();
+    }
+    if (this.ctx && this.ctx.state === "suspended") {
+      this.ctx.resume().catch(() => {});
+    }
+  }
+
+  public setMuted(muted: boolean) {
+    this.muted = muted;
+  }
+
+  private getContext(): AudioContext | null {
+    if (this.muted) return null;
+    this.init();
+    return this.ctx;
+  }
+
+  // Servo motor hum during mechanical movement
+  public playServoHum() {
+    const ctx = this.getContext();
+    if (!ctx) return;
+    try {
+      const now = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const filter = ctx.createBiquadFilter();
+      const gain = ctx.createGain();
+
+      osc.type = "triangle";
+      osc.frequency.setValueAtTime(120, now);
+      osc.frequency.exponentialRampToValueAtTime(160, now + 0.15);
+
+      filter.type = "lowpass";
+      filter.frequency.setValueAtTime(450, now);
+
+      gain.gain.setValueAtTime(0.001, now);
+      gain.gain.linearRampToValueAtTime(0.06, now + 0.04);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start(now);
+      osc.stop(now + 0.24);
+    } catch {}
+  }
+
+  // Heavy metallic impact & industrial alarm buzzer
+  public playCollisionSound() {
+    const ctx = this.getContext();
+    if (!ctx) return;
+    try {
+      const now = ctx.currentTime;
+
+      // 1. Low metallic thud
+      const thudOsc = ctx.createOscillator();
+      const thudGain = ctx.createGain();
+      thudOsc.type = "sine";
+      thudOsc.frequency.setValueAtTime(260, now);
+      thudOsc.frequency.exponentialRampToValueAtTime(40, now + 0.35);
+
+      thudGain.gain.setValueAtTime(0.35, now);
+      thudGain.gain.exponentialRampToValueAtTime(0.001, now + 0.38);
+
+      thudOsc.connect(thudGain);
+      thudGain.connect(ctx.destination);
+      thudOsc.start(now);
+      thudOsc.stop(now + 0.4);
+
+      // 2. Alarm klaxon buzzer
+      const buzzOsc = ctx.createOscillator();
+      const buzzGain = ctx.createGain();
+      buzzOsc.type = "sawtooth";
+      buzzOsc.frequency.setValueAtTime(740, now);
+      buzzOsc.frequency.setValueAtTime(580, now + 0.12);
+      buzzOsc.frequency.setValueAtTime(880, now + 0.24);
+
+      buzzGain.gain.setValueAtTime(0.18, now);
+      buzzGain.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
+
+      buzzOsc.connect(buzzGain);
+      buzzGain.connect(ctx.destination);
+      buzzOsc.start(now);
+      buzzOsc.stop(now + 0.48);
+    } catch {}
+  }
+
+  // Safety confirmation harmonic chime
+  public playSafeChime() {
+    const ctx = this.getContext();
+    if (!ctx) return;
+    try {
+      const now = ctx.currentTime;
+      const notes = [523.25, 659.25, 783.99]; // C5, E5, G5
+      notes.forEach((freq, i) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(freq, now + i * 0.1);
+
+        gain.gain.setValueAtTime(0.001, now + i * 0.1);
+        gain.gain.linearRampToValueAtTime(0.09, now + i * 0.1 + 0.03);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.1 + 0.45);
+
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+
+        osc.start(now + i * 0.1);
+        osc.stop(now + i * 0.1 + 0.5);
+      });
+    } catch {}
+  }
+}
+
 export default function WorkcellCanvas({ currentFrame, isCollision }: WorkcellCanvasProps) {
   const mountRef = useRef<HTMLDivElement>(null);
   const [cameraView, setCameraView] = useState<"iso" | "die" | "top">("iso");
+  const [isMuted, setIsMuted] = useState<boolean>(false);
+
+  const audioRef = useRef<IndustrialAudioSynthesizer | null>(null);
+  const prevCollisionRef = useRef<boolean>(false);
+  const prevOutputsRef = useRef<Record<string, boolean>>({});
 
   const sceneRef = useRef<{
     scene: THREE.Scene;
@@ -26,6 +156,24 @@ export default function WorkcellCanvas({ currentFrame, isCollision }: WorkcellCa
     beaconLight: THREE.PointLight;
     sparkParticles: THREE.Points;
   } | null>(null);
+
+  // Initialize Audio Synthesizer once
+  useEffect(() => {
+    if (!audioRef.current) {
+      audioRef.current = new IndustrialAudioSynthesizer();
+    }
+  }, []);
+
+  const toggleMute = () => {
+    if (!audioRef.current) return;
+    audioRef.current.init();
+    const nextMuted = !isMuted;
+    setIsMuted(nextMuted);
+    audioRef.current.setMuted(nextMuted);
+    if (!nextMuted) {
+      audioRef.current.playSafeChime();
+    }
+  };
 
   useEffect(() => {
     if (!mountRef.current) return;
@@ -116,7 +264,7 @@ export default function WorkcellCanvas({ currentFrame, isCollision }: WorkcellCa
       emissive: 0x000000,
     });
     const pressRam = new THREE.Mesh(ramGeo, ramMat);
-    pressRam.position.set(0, 3.0, 0); // Extended at 0.45, Retracted at 3.0
+    pressRam.position.set(0, 3.0, 0);
     scene.add(pressRam);
 
     // 5. Robotic Transfer Arm (%QX0.1)
@@ -261,7 +409,7 @@ export default function WorkcellCanvas({ currentFrame, isCollision }: WorkcellCa
     }
   }, [cameraView]);
 
-  // Update 3D Kinematics based on active ReplayFrame
+  // Update 3D Kinematics and WebAudio Triggers based on active ReplayFrame
   useEffect(() => {
     if (!sceneRef.current) return;
     const { pressRam, transferArm, conveyorBelt, clampJaws, pumpValve, laserCurtain, beaconLight, sparkParticles } = sceneRef.current;
@@ -275,24 +423,29 @@ export default function WorkcellCanvas({ currentFrame, isCollision }: WorkcellCa
     const isAlarmActive = !!outputs["%QX0.5"] || isCollision;
 
     // Kinematic Positions:
-    // %QX0.0 Press Ram: Down at Y=0.45 when True, Up at Y=3.0 when False
     pressRam.position.y = isPressExtended ? 0.45 : 3.0;
-
-    // %QX0.1 Transfer Arm: Extended at X=1.6 into die when True, Retracted at X=0 when False
     transferArm.position.x = isArmExtended ? 1.6 : 0.0;
-
-    // %QX0.2 Conveyor
     conveyorBelt.scale.set(1, 1, isConveyorActive ? 1.05 : 1.0);
-
-    // %QX0.3 Clamp Jaws
     clampJaws.scale.set(isClampActive ? 0.6 : 1.0, 1, isClampActive ? 0.6 : 1.0);
-
-    // %QX0.4 Pump Solenoid
     (pumpValve.material as THREE.MeshStandardMaterial).emissive.setHex(isPumpActive ? 0x8b5cf6 : 0x000000);
-
-    // %QX0.5 Safety Curtain & Beacon
     (laserCurtain.material as THREE.MeshBasicMaterial).opacity = isAlarmActive ? 0.65 : 0.15;
     beaconLight.intensity = isAlarmActive ? 3.5 : 0;
+
+    // WebAudio Triggers
+    if (audioRef.current) {
+      // 1. Collision sound on impact frame
+      if (isCollision && !prevCollisionRef.current) {
+        audioRef.current.playCollisionSound();
+      }
+      // 2. Servo movement hum when ram or arm changes state
+      const ramChanged = isPressExtended !== !!prevOutputsRef.current["%QX0.0"];
+      const armChanged = isArmExtended !== !!prevOutputsRef.current["%QX0.1"];
+      if ((ramChanged || armChanged) && !isCollision) {
+        audioRef.current.playServoHum();
+      }
+    }
+    prevCollisionRef.current = !!isCollision;
+    prevOutputsRef.current = outputs;
 
     // Collision Detection Spark & Ram Glow
     if (isCollision || (isPressExtended && isArmExtended)) {
@@ -315,8 +468,22 @@ export default function WorkcellCanvas({ currentFrame, isCollision }: WorkcellCa
         <span>3D DIGITAL TWIN • 6 UNIVERSAL ACTUATORS</span>
       </div>
 
-      {/* 3D Camera Controls Right */}
-      <div className="absolute top-3 right-3 bg-black/70 backdrop-blur-md p-1 rounded border border-slate-700/60 text-[11px] font-mono flex items-center space-x-1 z-10">
+      {/* Audio & Camera Controls Right */}
+      <div className="absolute top-3 right-3 bg-black/70 backdrop-blur-md p-1 rounded border border-slate-700/60 text-[11px] font-mono flex items-center space-x-1.5 z-10">
+        {/* Audio Mute/Unmute Synthesizer Toggle */}
+        <button
+          onClick={toggleMute}
+          className={`px-2 py-0.5 rounded border transition flex items-center space-x-1 ${
+            isMuted
+              ? "bg-slate-900 border-slate-700 text-slate-400 hover:text-white"
+              : "bg-emerald-950/70 border-emerald-500/60 text-emerald-300"
+          }`}
+          title="Toggle Industrial Audio Effects (WebAudio Synthesizer)"
+        >
+          <span>{isMuted ? "🔇 Audio OFF" : "🔊 Audio ON"}</span>
+        </button>
+
+        {/* Camera Views */}
         <button
           onClick={() => setCameraView("iso")}
           className={`px-2 py-0.5 rounded transition ${
