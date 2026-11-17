@@ -45,122 +45,137 @@ export default function VerificationReport({
     }
   };
 
-  return (
-    <div className="bg-slate-950 border border-slate-800 rounded-lg p-4 space-y-4 font-mono text-xs shadow-xl">
-      {/* Header */}
-      <div className="flex items-center justify-between pb-2 border-b border-slate-800">
-        <div className="flex items-center space-x-2">
-          <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-pulse" />
-          <h3 className="text-xs font-bold text-slate-200 uppercase tracking-wider">
-            Temporal Formal Verification Diagnostic
-          </h3>
-        </div>
-        <span className="text-[10px] text-slate-400">
-          Rolls-Royce EARS (2009) Engine
-        </span>
-      </div>
+  const isSafe = result.safe;
+  const cA = result.collision_coils[0] || "%QX0.0";
+  const cB = result.collision_coils[1] || "%QX0.1";
 
-      {/* Primary Status Banner */}
+  return (
+    <div className="rounded-2xl bg-[#0C0E14] border border-white/[0.08] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)] p-4 space-y-3.5 font-mono text-xs">
+      {/* Executive Status Banner */}
       <div
-        className={`p-3.5 rounded-md border flex flex-col space-y-1.5 ${
-          result.safe
-            ? "border-emerald-500/60 bg-emerald-950/20 text-emerald-200"
-            : "border-rose-500/70 bg-rose-950/30 text-rose-200 shadow-[0_0_15px_rgba(244,63,94,0.15)]"
+        className={`p-3.5 rounded-xl border transition-all duration-300 ${
+          isSafe
+            ? "border-emerald-500/50 bg-emerald-950/20 text-emerald-100 shadow-[0_0_20px_rgba(16,185,129,0.12)]"
+            : "border-rose-500/60 bg-rose-950/25 text-rose-100 shadow-[0_0_20px_rgba(239,68,68,0.15)]"
         }`}
       >
-        <div className="flex items-center justify-between">
-          <span className="text-sm font-bold flex items-center space-x-2">
-            <span>{result.safe ? "✅ 100% INVARIANT SAFE" : "⚠️ HAZARD DETECTED"}</span>
-          </span>
-          <span className="text-[11px] px-2 py-0.5 rounded bg-slate-900 border border-slate-700 text-slate-300">
-            {result.states_explored} States Checked
+        <div className="flex items-center justify-between mb-1.5">
+          <div className="flex items-center space-x-2">
+            <span
+              className={`w-2.5 h-2.5 rounded-full ${
+                isSafe ? "bg-emerald-400 shadow-[0_0_8px_#10b981]" : "bg-rose-500 animate-ping shadow-[0_0_8px_#ef4444]"
+              }`}
+            />
+            <span className="font-bold tracking-wider text-[13px] uppercase">
+              {isSafe ? "100% Invariant Safe · 0 Reachable Hazards" : `Critical Collision at Cycle #${result.collision_cycle}`}
+            </span>
+          </div>
+          <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/[0.06] text-slate-300 font-semibold border border-white/[0.08]">
+            {isSafe ? "VERIFIED PROOF" : "BREACH DETECTED"}
           </span>
         </div>
 
-        {result.safe ? (
-          <p className="text-[11px] text-emerald-300/90 leading-relaxed">
-            All temporal execution paths satisfy IEC 61131-3 physical exclusion invariants across full
-            scan space. No race conditions, timer skips, or mechanical interference found.
-          </p>
-        ) : (
-          <div className="space-y-1">
-            <p className="text-[11px] text-rose-300 leading-relaxed font-semibold">
-              {result.hazard}
-            </p>
-            <div className="flex flex-wrap gap-2 pt-1 text-[10px]">
-              <span className="bg-rose-900/40 border border-rose-600/50 px-2 py-0.5 rounded text-rose-200 font-bold">
-                Breach Cycle: #{result.collision_cycle}
-              </span>
-              <span className="bg-rose-900/40 border border-rose-600/50 px-2 py-0.5 rounded text-rose-200 font-bold">
-                Conflicting Coils: {result.collision_coils.join(" + ")}
-              </span>
-              <span className="bg-rose-900/40 border border-rose-600/50 px-2 py-0.5 rounded text-rose-200 font-bold">
-                Fault Rungs: {result.fault_rung_ids.map((id) => `#${id}`).join(", ")}
-              </span>
-            </div>
+        <p className="text-[11px] text-slate-300 font-sans leading-relaxed">
+          {isSafe
+            ? "Exhaustive bounded model check proves all reachable states satisfy IEC 61131-3 physical mutual exclusion. Zero race conditions, sensor glitches, or timing deadlocks detected."
+            : result.hazard || "Temporal race condition detected: conflicting actuators energized simultaneously inside shared physical zone."}
+        </p>
+      </div>
+
+      {/* 3-Column KPI Stat Row */}
+      <div className="grid grid-cols-3 gap-2 tabular-nums">
+        <div className="p-2.5 rounded-xl bg-[#090C12] border border-white/[0.06] flex flex-col justify-between">
+          <span className="text-[10px] text-slate-400 uppercase tracking-wider">States Explored</span>
+          <span className="text-base font-bold text-white mt-1">{result.states_explored}</span>
+          <span className="text-[9px] text-slate-500">Exhaustive BFS</span>
+        </div>
+
+        <div className="p-2.5 rounded-xl bg-[#090C12] border border-white/[0.06] flex flex-col justify-between">
+          <span className="text-[10px] text-slate-400 uppercase tracking-wider">Failure Cycle</span>
+          <span className={`text-base font-bold mt-1 ${isSafe ? "text-emerald-400" : "text-rose-400"}`}>
+            {result.collision_cycle !== null ? `#${String(result.collision_cycle).padStart(2, "0")}` : "None (Safe)"}
+          </span>
+          <span className="text-[9px] text-slate-500">{isSafe ? "0 Reachable" : "Crash Frame"}</span>
+        </div>
+
+        <div className="p-2.5 rounded-xl bg-[#090C12] border border-white/[0.06] flex flex-col justify-between">
+          <span className="text-[10px] text-slate-400 uppercase tracking-wider">Colliding Coils</span>
+          <span className="text-sm font-bold text-amber-300 mt-1 truncate">
+            {result.collision_coils.length > 0 ? result.collision_coils.join(" + ") : "0 Conflicts"}
+          </span>
+          <span className="text-[9px] text-slate-500">Universal Field Bus</span>
+        </div>
+      </div>
+
+      {/* Rolls-Royce EARS Specification Invariant Block (Stripe API Style) */}
+      <div className="rounded-xl bg-[#080B10] border border-white/[0.08] p-3 space-y-1.5">
+        <div className="flex items-center justify-between text-[10px] text-slate-400">
+          <span className="font-semibold text-slate-300 uppercase tracking-wider">
+            Rolls-Royce EARS Invariant Rule
+          </span>
+          <span className="text-amber-400/90 font-medium">[Mavin et al., Rolls-Royce 2009]</span>
+        </div>
+
+        <div className="text-[11px] leading-relaxed bg-[#05070B] p-2.5 rounded-lg border border-white/[0.04] text-slate-300 space-y-1">
+          <div>
+            <span className="text-violet-400 font-bold">WHILE </span>
+            <span className="text-amber-300 font-semibold">{cB} (Primary Actuator)</span>
+            <span className="text-slate-400"> is active or inside die center,</span>
           </div>
-        )}
+          <div>
+            <span className="text-emerald-400 font-bold">THE SYSTEM SHALL </span>
+            <span className="text-rose-300 font-semibold">inhibit {cA} (Secondary Stroke)</span>
+            <span className="text-slate-400"> from energizing,</span>
+          </div>
+          <div>
+            <span className="text-cyan-400 font-bold">WHERE </span>
+            <span className="text-slate-400">normal execution resumes only when Arm is safely Home (%IX0.2).</span>
+          </div>
+        </div>
       </div>
 
       {/* Before / After Proof Delta (Shown after patch is synthesized) */}
-      {deltaInfo && result.safe && (
-        <div className="p-3 bg-gradient-to-r from-emerald-950/40 to-cyan-950/40 border border-emerald-500/50 rounded-md space-y-1.5 shadow-[0_0_15px_rgba(16,185,129,0.2)]">
+      {deltaInfo && isSafe && (
+        <div className="p-3 bg-gradient-to-r from-emerald-950/30 to-violet-950/30 border border-emerald-500/40 rounded-xl space-y-1.5 shadow-[0_0_15px_rgba(16,185,129,0.15)]">
           <div className="flex items-center justify-between text-[11px] font-bold text-emerald-300">
-            <span>⚡ Before/After Formal Proof Delta</span>
-            <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-500/40">
-              VERIFIED
+            <span>⚡ Formal Proof Delta (Before → After)</span>
+            <span className="text-[9px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/40 font-bold">
+              PROVEN SAFE
             </span>
           </div>
-          <div className="text-[11px] text-slate-300 space-y-1">
+          <div className="text-[11px] text-slate-300 space-y-0.5">
             <div className="flex items-center space-x-2">
               <span className="text-rose-400 font-bold">Before:</span>
-              <span>Crash at Cycle #{deltaInfo.beforeCycle} ({result.collision_coils.join(" + ") || "Hazard State"})</span>
+              <span>Crash at Cycle #{deltaInfo.beforeCycle} ({cA} vs {cB})</span>
             </div>
             <div className="flex items-center space-x-2">
               <span className="text-emerald-400 font-bold">After:</span>
-              <span>0 Hazards Reachable across {result.states_explored} Discrete States</span>
+              <span>0 Hazards Reachable across {result.states_explored} states</span>
             </div>
-            <div className="text-[10px] text-cyan-300 font-semibold pt-0.5">
+            <div className="text-[10px] text-violet-300 font-medium pt-0.5">
               {deltaInfo.deltaText}
             </div>
           </div>
         </div>
       )}
 
-      {/* Rolls-Royce EARS Specification Invariant */}
-      <div className="p-3 bg-slate-900/70 border border-slate-800 rounded-md space-y-2">
-        <div className="flex items-center justify-between text-[11px] text-slate-400">
-          <span className="font-bold text-slate-300 uppercase tracking-wide">
-            Rolls-Royce EARS Specification Invariant
-          </span>
-          <span className="text-[10px] text-amber-400 font-semibold">
-            [Mavin et al., Rolls-Royce 2009]
-          </span>
-        </div>
-        <div className="p-2.5 bg-slate-950 rounded border border-slate-800 text-[11px] text-amber-200/90 font-mono italic leading-relaxed">
-          &quot;When <span className="font-bold text-amber-300">{result.collision_coils[0] || "%QX0.0"}</span> is energized, the
-          system shall ensure <span className="font-bold text-amber-300">{result.collision_coils[1] || "%QX0.1"}</span> is
-          de-energized, and while workpiece transfer is active, conflicting stroke operations shall be inhibited.&quot;
-        </div>
-      </div>
-
-      {/* Action Strip: Patching & Download Patched XML */}
-      <div className="space-y-2">
+      {/* Primary Action Button: Synthesize EARS Interlock or Download XML */}
+      <div className="pt-1 space-y-2">
         {canPatch && (
           <button
             onClick={onSynthesizePatch}
-            className="w-full py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded font-bold text-xs border border-emerald-400 active:scale-98 transition shadow-[0_0_15px_rgba(16,185,129,0.3)] flex items-center justify-center space-x-2 animate-pulse"
+            className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-violet-600 via-emerald-600 to-teal-500 hover:from-violet-500 hover:via-emerald-500 hover:to-teal-400 text-white font-bold text-xs shadow-[0_0_20px_rgba(139,92,246,0.35)] transition-all active:scale-[0.99] border border-white/20 flex items-center justify-center space-x-2"
           >
-            <span>⚡ Synthesize Dynamic EARS Interlock (Deadlock-Free)</span>
+            <span>⚡ Synthesize EARS Interlock & Re-Verify</span>
           </button>
         )}
 
-        {result.safe && (
+        {isSafe && (
           <button
             onClick={handleDownloadXml}
-            className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded font-bold text-xs border border-slate-700 active:scale-98 transition flex items-center justify-center space-x-2"
+            className="w-full py-2.5 px-4 rounded-xl bg-[#131722] hover:bg-[#1a2030] text-emerald-300 hover:text-emerald-200 font-bold text-xs border border-emerald-500/40 shadow-lg transition-all active:scale-[0.99] flex items-center justify-center space-x-2"
           >
-            <span>{downloadSuccess ? "✅ Downloaded!" : "📥 Download Patched PLCopen XML (.xml)"}</span>
+            <span>{downloadSuccess ? "✓ Patched XML Downloaded!" : "📥 Download Patched PLCopen XML (.xml)"}</span>
           </button>
         )}
       </div>

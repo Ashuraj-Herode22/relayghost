@@ -1,13 +1,12 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import WorkcellCanvas from "@/components/WorkcellCanvas";
 import LadderViewer from "@/components/LadderViewer";
 import ScrubberPlayer from "@/components/ScrubberPlayer";
 import PresetBar from "@/components/PresetBar";
 import ActuatorBoard from "@/components/ActuatorBoard";
 import VerificationReport from "@/components/VerificationReport";
-import EventTimeline from "@/components/EventTimeline";
 import { BENCHMARKS } from "@/lib/benchmarkPresets";
 import {
   parsePlcopenXml,
@@ -27,13 +26,17 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [sourceName, setSourceName] = useState<string>(
-    "Preset 1: Stamping Press Missing Interlock"
+    "01 · Stamping Press (Known Defect)"
   );
   const [deltaInfo, setDeltaInfo] = useState<{
     patchDescription: string;
     deltaText: string;
     beforeCycle: number | null;
   } | null>(null);
+  const [isUploadModalOpen, setIsUploadModalOpen] = useState<boolean>(false);
+  const [isDragging, setIsDragging] = useState<boolean>(false);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Load and verify a preset or XML string
   const loadAndVerify = (xml: string, label: string) => {
@@ -49,13 +52,13 @@ export default function Home() {
       setSourceName(label);
     } catch (err: any) {
       console.error("Verification failed:", err);
-      setErrorMessage(err.message || "Failed to parse or verify PLCopen XML.");
+      setErrorMessage(err.message || "Failed to parse or verify IEC 61131-3 PLCopen XML.");
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Initial load
+  // Initial load: Preset 1
   useEffect(() => {
     const defaultPreset = BENCHMARKS.find((b) => b.id === selectedPresetId) || BENCHMARKS[0];
     if (defaultPreset) {
@@ -73,17 +76,32 @@ export default function Home() {
 
   const handleUploadXml = (xmlContent: string, fileName: string) => {
     setSelectedPresetId("custom-upload");
-    loadAndVerify(xmlContent, `Uploaded File: ${fileName}`);
+    loadAndVerify(xmlContent, fileName);
+    setIsUploadModalOpen(false);
   };
 
-  // Dynamic, Deadlock-Free Interlock Synthesis
+  const handleDownloadSample = () => {
+    const sample = BENCHMARKS.find((b) => b.id.includes("mystery_gamma")) || BENCHMARKS[0];
+    const blob = new Blob([sample.xml], { type: "application/xml" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "sample_plcopen_program.xml";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  // Dynamic EARS Interlock Synthesis
   const handleSynthesizePatch = () => {
     if (!currentRungs.length || !verificationResult) return;
     setIsLoading(true);
     try {
-      const collisionCoils = verificationResult.collision_coils.length > 0
-        ? verificationResult.collision_coils
-        : ["%QX0.0", "%QX0.1"];
+      const collisionCoils =
+        verificationResult.collision_coils.length > 0
+          ? verificationResult.collision_coils
+          : ["%QX0.0", "%QX0.1"];
       const faultRungs = verificationResult.fault_rung_ids;
       const beforeCycle = verificationResult.collision_cycle;
 
@@ -97,7 +115,7 @@ export default function Home() {
       const result = executeModelChecker(patchedRungs);
       setVerificationResult(result);
       setCurrentFrameIndex(0);
-      setSourceName(`${sourceName} [Patched with EARS Interlocks]`);
+      setSourceName(`${sourceName} [Synthesized EARS Safe]`);
       setDeltaInfo({
         patchDescription,
         deltaText,
@@ -115,110 +133,146 @@ export default function Home() {
   const isCrashFrame = Boolean(
     verificationResult &&
       !verificationResult.safe &&
-      currentFrameIndex === (verificationResult.trace.length - 1) &&
+      currentFrameIndex === verificationResult.trace.length - 1 &&
       verificationResult.collision_cycle !== null
   );
 
   return (
-    <div className="min-h-screen bg-[#070b12] text-slate-100 flex flex-col font-sans selection:bg-amber-500/30 selection:text-amber-200">
-      {/* Top Header & SCADA Navigation */}
-      <header className="border-b border-slate-800 bg-[#0a0f1d]/90 backdrop-blur-md sticky top-0 z-50 px-4 lg:px-8 py-3 flex flex-wrap items-center justify-between gap-4">
+    <div className="min-h-screen bg-[#06070A] text-slate-100 flex flex-col font-sans selection:bg-amber-500/20 selection:text-amber-200">
+      {/* 1. Top Command Bar (56px fixed height, glassmorphic backdrop) */}
+      <header className="h-14 border-b border-white/[0.08] bg-[#0C0E14]/80 backdrop-blur-md sticky top-0 z-50 px-4 lg:px-6 flex items-center justify-between gap-4">
+        {/* Left: Minimalist SVG Geometric Emblem + Wordmark */}
         <div className="flex items-center space-x-3">
-          <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-amber-500 to-rose-600 flex items-center justify-center font-bold text-white shadow-[0_0_15px_rgba(245,158,11,0.4)]">
-            RG
-          </div>
-          <div>
-            <div className="flex items-center space-x-2">
-              <h1 className="font-mono text-base font-bold tracking-wider text-slate-100">
-                RELAYGHOST
-              </h1>
-              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
-                SCADA v2.4
-              </span>
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-500 via-violet-600 to-rose-600 p-[1px] shadow-[0_0_15px_rgba(245,158,11,0.25)] flex items-center justify-center">
+            <div className="w-full h-full bg-[#0C0E14] rounded-[7px] flex items-center justify-center">
+              <svg className="w-4 h-4 text-amber-400" viewBox="0 0 24 24" fill="none">
+                <path
+                  d="M12 2L2 7L12 12L22 7L12 2Z"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <path
+                  d="M2 17L12 22L22 17"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="text-violet-400"
+                />
+                <path
+                  d="M2 12L12 17L22 12"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="text-emerald-400"
+                />
+              </svg>
             </div>
-            <p className="text-[11px] text-slate-400 font-mono">
-              Temporal Bounded Model Checker for 1968 IEC 61131-3 Ladder Logic
-            </p>
+          </div>
+
+          <div className="flex items-center space-x-2">
+            <span className="font-mono font-bold tracking-wider text-sm text-white">
+              RELAYGHOST
+            </span>
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold bg-white/[0.06] text-slate-300 border border-white/[0.08] hidden sm:inline">
+              IEC 61131-3 Temporal Verifier
+            </span>
           </div>
         </div>
 
-        {/* Status Badges */}
-        <div className="hidden md:flex items-center space-x-3 text-xs font-mono">
-          <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded bg-slate-900 border border-slate-800 text-slate-300">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span>Spec Engine: Rolls-Royce EARS (2009)</span>
-          </div>
-          <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded bg-slate-900 border border-slate-800 text-slate-300">
-            <span className="w-2 h-2 rounded-full bg-cyan-400" />
-            <span>Kiro Hook: PostFileSave Active</span>
-          </div>
+        {/* Center: Segmented 3 Core Scenario Pills */}
+        <div className="hidden md:flex items-center">
+          <PresetBar
+            selectedPresetId={selectedPresetId}
+            onSelectPreset={handleSelectPreset}
+          />
+        </div>
+
+        {/* Right: Actions (Upload .XML, Sample .XML, Benchmark Suite) */}
+        <div className="flex items-center space-x-2 font-mono text-xs">
+          {/* Quick Sample Download */}
+          <button
+            onClick={handleDownloadSample}
+            className="px-2.5 py-1.5 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] text-slate-300 hover:text-white border border-white/[0.08] transition active:scale-95 text-[11px] hidden sm:flex items-center space-x-1"
+            title="Download sample IEC 61131-3 PLCopen XML"
+          >
+            <span>📥 Sample .xml</span>
+          </button>
+
+          {/* Upload .XML Button */}
+          <button
+            onClick={() => setIsUploadModalOpen(true)}
+            className="px-3 py-1.5 rounded-lg bg-white text-slate-950 hover:bg-slate-200 font-semibold text-[11px] shadow-sm transition active:scale-95 flex items-center space-x-1.5"
+          >
+            <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none">
+              <path
+                d="M8 10V2M8 2L5 5M8 2L11 5M2 11V13C2 13.5523 2.44772 14 3 14H13C13.5523 14 14 13.5523 14 13V11"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+            <span>Upload .XML</span>
+          </button>
+
+          {/* External Benchmark Suite Link */}
           <a
-            href="https://github.com/Ashuraj-Herode22/relayghost"
+            href="https://github.com/Ashuraj-Herode22/relayghost/tree/main/plc-benchmarks"
             target="_blank"
             rel="noopener noreferrer"
-            className="px-3 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition flex items-center space-x-1.5 active:scale-95"
+            className="px-2.5 py-1.5 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] text-slate-400 hover:text-slate-200 border border-white/[0.08] transition text-[11px] hidden lg:flex items-center space-x-1"
+            title="Download sample IEC 61131-3 PLCopen XML programs from plc-benchmarks/ (known-errors/ and test-for-yourself/) to test temporal model checking"
           >
-            <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
-              <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z" />
-            </svg>
-            <span>GitHub</span>
+            <span>Benchmarks</span>
+            <span>↗</span>
           </a>
         </div>
       </header>
 
-      {/* Main Workspace */}
-      <main className="flex-1 p-4 lg:p-6 space-y-4 max-w-[1680px] w-full mx-auto">
-        {/* Error Banner if invalid XML */}
+      {/* Mobile Scenario Bar */}
+      <div className="md:hidden p-2.5 border-b border-white/[0.08] bg-[#0C0E14] flex justify-center">
+        <PresetBar
+          selectedPresetId={selectedPresetId}
+          onSelectPreset={handleSelectPreset}
+        />
+      </div>
+
+      {/* Main Studio Workspace */}
+      <main className="flex-1 p-3.5 lg:p-5 flex flex-col space-y-3.5 max-w-[1720px] w-full mx-auto">
+        {/* Error Notification Banner if invalid XML is uploaded */}
         {errorMessage && (
-          <div className="p-3 bg-rose-950/80 border border-rose-500 rounded-lg text-xs font-mono text-rose-200 flex items-center justify-between shadow-xl">
-            <span className="flex items-center space-x-2">
-              <span>⚠️</span>
+          <div className="p-3 bg-rose-950/80 border border-rose-500/80 rounded-xl text-xs font-mono text-rose-200 flex items-center justify-between shadow-xl animate-shake">
+            <div className="flex items-center space-x-2">
+              <span className="text-base">⚠️</span>
               <span>{errorMessage}</span>
-            </span>
+            </div>
             <button
               onClick={() => setErrorMessage(null)}
-              className="text-rose-400 hover:text-white font-bold ml-4"
+              className="text-rose-300 hover:text-white font-bold ml-4 px-2 py-0.5 rounded bg-rose-900/60"
             >
-              ✕
+              Dismiss
             </button>
           </div>
         )}
 
-        {/* Preset & Benchmark Control Strip */}
-        <PresetBar
-          selectedPresetId={selectedPresetId}
-          onSelectPreset={handleSelectPreset}
-          onUploadXml={handleUploadXml}
-          onSynthesizePatch={handleSynthesizePatch}
-          canPatch={Boolean(verificationResult && !verificationResult.safe)}
-          isLoading={isLoading}
-        />
-
-        {/* Current Target Indicator */}
-        <div className="flex items-center justify-between px-3 py-1.5 bg-slate-900/60 border border-slate-800/80 rounded text-xs font-mono text-slate-300">
-          <div className="flex items-center space-x-2">
-            <span className="text-slate-500 uppercase">Target:</span>
-            <span className="font-semibold text-amber-300">{sourceName}</span>
-          </div>
-          <div className="text-slate-400">
-            Parsed: <span className="text-white font-bold">{currentRungs.length}</span> Rungs |
-            Format: <span className="text-cyan-400 font-bold">PLCopen XML tc6_0201</span>
-          </div>
-        </div>
-
-        {/* 2-Column SCADA Command Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-          {/* Left Column (58%): 3D Workcell + Telemetry + Scrubber */}
-          <div className="lg:col-span-7 flex flex-col space-y-4">
-            {/* 3D Digital Twin Workcell Canvas */}
-            <div className="h-[430px] w-full">
-              <WorkcellCanvas currentFrame={currentFrame} isCollision={isCrashFrame} />
+        {/* 2. Main Split Stage (60% Left Digital Twin / 40% Right Ladder & EARS Inspector) */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-3.5 flex-1 min-h-0">
+          {/* Left Column (60% on desktop): 3D Viewport + Netflix Replay Scrubber */}
+          <div className="lg:col-span-7 flex flex-col space-y-3">
+            {/* 3D Digital Twin Viewport */}
+            <div className="flex-1 min-h-[420px] lg:min-h-[460px] relative">
+              <WorkcellCanvas
+                currentFrame={currentFrame}
+                isCollision={isCrashFrame}
+                isSafe={Boolean(verificationResult?.safe)}
+              />
             </div>
 
-            {/* Field Actuators (%QX) & Discrete Sensors (%IX) Board */}
-            <ActuatorBoard currentFrame={currentFrame} />
-
-            {/* Replay Scrubber Player */}
+            {/* Bottom-Docked Replay Scrubber Player */}
             <ScrubberPlayer
               result={verificationResult}
               currentFrameIndex={currentFrameIndex}
@@ -226,10 +280,10 @@ export default function Home() {
             />
           </div>
 
-          {/* Right Column (42%): Ladder Diagram + Verification Diagnostic Report */}
-          <div className="lg:col-span-5 flex flex-col space-y-4">
-            {/* Live Power-Flow Ladder Diagram */}
-            <div className="h-[450px]">
+          {/* Right Column (40% on desktop): Live Ladder Schematic & EARS Inspector */}
+          <div className="lg:col-span-5 flex flex-col space-y-3">
+            {/* Top Card: Live Ladder Schematic Viewer */}
+            <div className="h-[310px] lg:h-[340px]">
               <LadderViewer
                 rungs={currentRungs}
                 currentFrame={currentFrame}
@@ -238,61 +292,125 @@ export default function Home() {
               />
             </div>
 
-            {/* Formal Verification Diagnostic Report */}
-            <VerificationReport
-              result={verificationResult}
-              rungs={currentRungs}
-              onSynthesizePatch={handleSynthesizePatch}
-              canPatch={Boolean(verificationResult && !verificationResult.safe)}
-              deltaInfo={deltaInfo}
-            />
+            {/* Bottom Card: Verification Diagnostic & Auto-Synthesis Panel */}
+            <div className="flex-1">
+              <VerificationReport
+                result={verificationResult}
+                rungs={currentRungs}
+                onSynthesizePatch={handleSynthesizePatch}
+                canPatch={Boolean(verificationResult && !verificationResult.safe)}
+                deltaInfo={deltaInfo}
+              />
+            </div>
           </div>
         </div>
 
-        {/* Diagnostics & Event Timeline Panel */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-          <div className="lg:col-span-6">
-            <EventTimeline
-              result={verificationResult}
-              currentFrameIndex={currentFrameIndex}
-              onSelectFrame={(idx) => setCurrentFrameIndex(idx)}
-            />
-          </div>
-
-          {/* Rolls-Royce EARS & Architecture Card */}
-          <div className="lg:col-span-6 bg-slate-950 border border-slate-800 rounded-lg p-4 font-mono text-xs text-slate-300 space-y-2.5 shadow-xl">
-            <div className="flex items-center justify-between pb-1.5 border-b border-slate-800">
-              <span className="font-bold text-slate-200 uppercase tracking-wider flex items-center space-x-1.5">
-                <span className="w-2 h-2 rounded-full bg-teal-400" />
-                <span>Polymathic Foundation: Rolls-Royce PLC to Kiro 2026</span>
-              </span>
-              <span className="text-[10px] text-slate-500">Spec-Driven Development Origin</span>
-            </div>
-            <p className="text-[11px] text-slate-400 leading-relaxed">
-              In 2009, Alistair Mavin invented <strong className="text-slate-200">EARS (Easy Approach to Requirements Syntax)</strong> at Rolls-Royce PLC to prevent catastrophic failure modes in aerospace jet engine controllers. 17 years later, Kiro adopted EARS for AI-assisted software specs. RelayGhost brings EARS back to its industrial heritage: formally verifying IEC 61131-3 Ladder Logic against temporal timing anomalies and race conditions.
-            </p>
-            <div className="grid grid-cols-3 gap-2 pt-1 text-[10px]">
-              <div className="p-2 bg-slate-900/80 rounded border border-slate-800">
-                <span className="text-amber-400 font-bold block">1968 Ladder Logic</span>
-                Scan cycles, TON/TOF timers, latches & interlocks.
-              </div>
-              <div className="p-2 bg-slate-900/80 rounded border border-slate-800">
-                <span className="text-cyan-400 font-bold block">Bounded Model Checking</span>
-                Exhaustive BFS exploration across all state permutations.
-              </div>
-              <div className="p-2 bg-slate-900/80 rounded border border-slate-800">
-                <span className="text-emerald-400 font-bold block">Agent Hook Gate</span>
-                Blocks unsafe commits in Kiro via automated exit code 1.
-              </div>
-            </div>
-          </div>
+        {/* 3. Compact Bottom Telemetry Strip */}
+        <div className="pt-0.5">
+          <ActuatorBoard currentFrame={currentFrame} />
         </div>
       </main>
 
-      {/* Footer */}
-      <footer className="border-t border-slate-800/80 bg-slate-950 px-6 py-4 mt-8 text-center text-xs font-mono text-slate-500">
-        RelayGhost • Autonomous Industrial SCADA Safety Verifier • Built with Next.js 15, Three.js & FastMCP • MIT License
-      </footer>
+      {/* Upload Modal (Drag and Drop / File Input) */}
+      {isUploadModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+          <div
+            className="w-full max-w-lg rounded-2xl bg-[#0C0E14] border border-white/[0.12] p-6 shadow-2xl space-y-4 font-mono text-xs text-slate-200"
+            onDragOver={(e) => {
+              e.preventDefault();
+              setIsDragging(true);
+            }}
+            onDragLeave={() => setIsDragging(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setIsDragging(false);
+              const file = e.dataTransfer.files?.[0];
+              if (file) {
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                  const content = event.target?.result as string;
+                  if (content) handleUploadXml(content, file.name);
+                };
+                reader.readAsText(file);
+              }
+            }}
+          >
+            <div className="flex items-center justify-between pb-2 border-b border-white/[0.08]">
+              <div className="flex items-center space-x-2">
+                <span className="w-2 h-2 rounded-full bg-amber-400" />
+                <h3 className="font-bold text-sm text-white">Upload PLCopen XML Program</h3>
+              </div>
+              <button
+                onClick={() => setIsUploadModalOpen(false)}
+                className="text-slate-400 hover:text-white p-1"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="text-slate-400 font-sans text-xs leading-relaxed">
+              Upload an authentic IEC 61131-3 Ladder Logic XML program (`tc6_0201` schema).
+              RelayGhost will parse contacts, coils, and timers with native DOMParser and execute
+              exhaustive temporal bounded model checking.
+            </p>
+
+            {/* Drag & Drop Zone */}
+            <div
+              className={`p-8 rounded-xl border-2 border-dashed flex flex-col items-center justify-center text-center cursor-pointer transition ${
+                isDragging
+                  ? "border-amber-400 bg-amber-500/10 text-amber-200"
+                  : "border-white/[0.12] hover:border-white/[0.25] bg-[#090C12]"
+              }`}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <svg className="w-8 h-8 text-slate-400 mb-2" viewBox="0 0 24 24" fill="none">
+                <path
+                  d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              <span className="font-semibold text-white">Click to browse or drag & drop</span>
+              <span className="text-[11px] text-slate-400 mt-1">Accepts `.xml` or `.plcopen` files</span>
+            </div>
+
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  const reader = new FileReader();
+                  reader.onload = (event) => {
+                    const content = event.target?.result as string;
+                    if (content) handleUploadXml(content, file.name);
+                  };
+                  reader.readAsText(file);
+                }
+              }}
+              accept=".xml,.plcopen"
+              className="hidden"
+            />
+
+            <div className="flex items-center justify-between pt-2 border-t border-white/[0.08]">
+              <button
+                onClick={handleDownloadSample}
+                className="text-amber-400 hover:text-amber-300 text-[11px] underline flex items-center space-x-1"
+              >
+                <span>📥 Download sample test file</span>
+              </button>
+              <button
+                onClick={() => setIsUploadModalOpen(false)}
+                className="px-3.5 py-1.5 rounded-lg bg-white/[0.08] hover:bg-white/[0.12] text-slate-300"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

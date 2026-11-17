@@ -8,23 +8,23 @@ interface ActuatorBoardProps {
 }
 
 const ACTUATOR_DEFS = [
-  { addr: "%QX0.0", name: "Hydraulic Press Ram", icon: "🔨" },
-  { addr: "%QX0.1", name: "Robotic Feeder Arm", icon: "🦾" },
-  { addr: "%QX0.2", name: "Feed Conveyor", icon: "📦" },
-  { addr: "%QX0.3", name: "Diverter Clamp", icon: "🗜️" },
-  { addr: "%QX0.4", name: "Relief Pump / Valve", icon: "⚙️" },
-  { addr: "%QX0.5", name: "Safety Strobe Beacon", icon: "🚨" },
+  { addr: "%QX0.0", name: "Press Ram", icon: "🔨" },
+  { addr: "%QX0.1", name: "Transfer Arm", icon: "🦾" },
+  { addr: "%QX0.2", name: "Conveyor", icon: "📦" },
+  { addr: "%QX0.3", name: "Clamp", icon: "🗜️" },
+  { addr: "%QX0.4", name: "Relief Valve", icon: "⚙️" },
+  { addr: "%QX0.5", name: "Beacon", icon: "🚨" },
 ];
 
 const SENSOR_DEFS = [
-  { addr: "%IX0.0", name: "Part Photoeye" },
-  { addr: "%IX0.1", name: "Press Retract LS" },
-  { addr: "%IX0.2", name: "Arm Home Sensor" },
-  { addr: "%IX0.3", name: "Safety Light Curtain" },
-  { addr: "%IX0.4", name: "E-Stop PB" },
-  { addr: "%IX0.5", name: "Cycle Start PB" },
-  { addr: "%IX0.6", name: "Gate Interlock" },
-  { addr: "%IX0.7", name: "Fault Reset PB" },
+  { addr: "%IX0.0", name: "Part PE" },
+  { addr: "%IX0.1", name: "Ram LS" },
+  { addr: "%IX0.2", name: "Arm Home" },
+  { addr: "%IX0.3", name: "Curtain" },
+  { addr: "%IX0.4", name: "E-Stop" },
+  { addr: "%IX0.5", name: "Start PB" },
+  { addr: "%IX0.6", name: "Gate" },
+  { addr: "%IX0.7", name: "Reset" },
 ];
 
 export default function ActuatorBoard({ currentFrame }: ActuatorBoardProps) {
@@ -32,73 +32,65 @@ export default function ActuatorBoard({ currentFrame }: ActuatorBoardProps) {
   const inputs = currentFrame?.inputs || {};
 
   return (
-    <div className="bg-slate-950 border border-slate-800 rounded-lg p-3 space-y-3 font-mono text-xs">
-      {/* Actuators (%QX) */}
-      <div>
-        <div className="flex items-center justify-between pb-1.5 mb-2 border-b border-slate-800/80">
-          <span className="text-[11px] font-bold text-slate-300 uppercase tracking-wider flex items-center space-x-1.5">
-            <span className="w-2 h-2 rounded-full bg-cyan-400" />
-            <span>Universal Actuators (%QX0.0 – %QX0.5)</span>
-          </span>
-          <span className="text-[10px] text-slate-500">Field Bus Outputs</span>
+    <div className="rounded-2xl bg-[#0C0E14] border border-white/[0.08] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)] px-4 py-2.5 font-mono text-xs flex flex-wrap items-center justify-between gap-4">
+      {/* Left: 6 Universal Actuators */}
+      <div className="flex items-center space-x-2">
+        <div className="flex items-center space-x-1.5 text-slate-400 text-[10px] uppercase font-bold tracking-wider mr-1">
+          <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+          <span>Actuators (%QX):</span>
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+
+        <div className="flex items-center space-x-1.5">
           {ACTUATOR_DEFS.map((act) => {
             const isActive = Boolean(outputs[act.addr]);
             return (
               <div
                 key={act.addr}
-                className={`p-2 rounded border transition-all flex flex-col justify-between ${
+                className={`px-2 py-1 rounded-lg border transition-all duration-150 flex items-center space-x-1.5 ${
                   isActive
-                    ? "border-amber-500/80 bg-amber-950/30 text-amber-200 shadow-[0_0_10px_rgba(245,158,11,0.2)]"
-                    : "border-slate-800 bg-slate-900/60 text-slate-400"
+                    ? "border-amber-500/70 bg-amber-950/40 text-amber-200 shadow-[0_0_8px_rgba(245,158,11,0.25)]"
+                    : "border-white/[0.06] bg-[#090C12] text-slate-400"
                 }`}
+                title={`${act.addr}: ${act.name} (${isActive ? "ACTIVE" : "OFF"})`}
               >
-                <div className="flex items-center justify-between text-[11px] mb-1">
-                  <span className="font-bold">{act.addr}</span>
-                  <span>{act.icon}</span>
-                </div>
-                <div className="text-[10px] truncate text-slate-300 font-sans">{act.name}</div>
-                <div className="mt-1 flex items-center justify-between text-[9px] font-bold">
-                  <span className={isActive ? "text-amber-400" : "text-slate-600"}>
-                    {isActive ? "ACTIVE" : "OFF"}
-                  </span>
-                  <span
-                    className={`w-2 h-2 rounded-full ${
-                      isActive ? "bg-amber-400 shadow-[0_0_6px_#f59e0b]" : "bg-slate-700"
-                    }`}
-                  />
-                </div>
+                <span
+                  className={`w-1.5 h-1.5 rounded-full ${
+                    isActive ? "bg-amber-400 shadow-[0_0_6px_#f59e0b]" : "bg-slate-700"
+                  }`}
+                />
+                <span className="font-bold text-[11px]">{act.addr}</span>
+                <span className="text-[10px] text-slate-300 hidden md:inline">{act.name}</span>
               </div>
             );
           })}
         </div>
       </div>
 
-      {/* Sensors (%IX) */}
-      <div>
-        <div className="flex items-center justify-between pb-1 mb-1.5 border-b border-slate-800/60">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center space-x-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-            <span>Discrete Field Sensors (%IX0.0 – %IX0.7)</span>
-          </span>
-          <span className="text-[9px] text-slate-500">Scan Input Bus</span>
+      {/* Center Divider on large screens */}
+      <div className="hidden xl:block w-[1px] h-5 bg-white/[0.08]" />
+
+      {/* Right: 8 Discrete Sensors */}
+      <div className="flex items-center space-x-2">
+        <div className="flex items-center space-x-1.5 text-slate-400 text-[10px] uppercase font-bold tracking-wider mr-1">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+          <span>Sensors (%IX):</span>
         </div>
-        <div className="grid grid-cols-4 sm:grid-cols-8 gap-1.5 text-[10px]">
+
+        <div className="flex items-center space-x-1">
           {SENSOR_DEFS.map((s) => {
             const isHigh = Boolean(inputs[s.addr]);
             return (
               <div
                 key={s.addr}
-                className={`px-1.5 py-1 rounded border text-center transition ${
+                className={`px-1.5 py-1 rounded-md border text-center transition-all ${
                   isHigh
-                    ? "border-emerald-500/60 bg-emerald-950/30 text-emerald-300 font-bold"
-                    : "border-slate-800/80 bg-slate-900/40 text-slate-500"
+                    ? "border-emerald-500/60 bg-emerald-950/40 text-emerald-200 font-bold shadow-[0_0_6px_rgba(16,185,129,0.2)]"
+                    : "border-white/[0.04] bg-[#090C12] text-slate-500"
                 }`}
-                title={`${s.addr}: ${s.name} (${isHigh ? "HIGH" : "LOW"})`}
+                title={`${s.addr}: ${s.name} (${isHigh ? "1 / HIGH" : "0 / LOW"})`}
               >
-                <div>{s.addr}</div>
-                <div className={`text-[8px] mt-0.5 ${isHigh ? "text-emerald-400" : "text-slate-600"}`}>
+                <div className="text-[9px]">{s.addr.replace("%IX0.", "I.")}</div>
+                <div className={`text-[8px] font-bold ${isHigh ? "text-emerald-400" : "text-slate-600"}`}>
                   {isHigh ? "1" : "0"}
                 </div>
               </div>
