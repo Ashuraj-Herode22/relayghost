@@ -7,8 +7,10 @@ Provides tools: verify_plc_file and verify_plc_xml_string.
 import sys
 import os
 import json
+from pathlib import Path
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+# Robust root path resolution so Kiro can launch from any working directory
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from engine.plc_parser import parse_plc_file, PLCopenXMLParser
 from engine.plc_model_checker import TemporalModelChecker, PLCState

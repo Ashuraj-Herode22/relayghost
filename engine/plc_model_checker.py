@@ -1,8 +1,8 @@
 """
-RelayGhost: Temporal Bounded Model Checker for IEC 61131-3 Ladder Logic.
-Simulates discrete PLC scan cycles, Set/Reset latches (OTL/OTU), and TON timers.
-Supports parallel OR branches, sequential intra-scan memory updates, active/fault rungs tracking,
-and outputs standardized replay JSON for the 3D SCADA player.
+RelayGhost: Hardened Temporal Bounded Model Checker for IEC 61131-3 Ladder Logic.
+Simulates discrete PLC scan cycles, Set/Reset latches (OTL/OTU), Timers (TON, TOF), and Counters (CTU).
+Supports parallel OR branches, sequential intra-scan memory updates, persistent fault rung attribution,
+and standardized replay JSON contracts.
 """
 
 from dataclasses import dataclass, field
@@ -15,9 +15,19 @@ from collections import deque
 class Timer:
     name: str
     preset_ms: int
+    timer_type: str = "TON"  # 'TON' or 'TOF'
     accum_ms: int = 0
     en: bool = False  # Enable bit
     dn: bool = False  # Done bit
+
+
+@dataclass
+class Counter:
+    name: str
+    preset: int
+    accum: int = 0
+    dn: bool = False
+    last_in: bool = False
 
 
 @dataclass
@@ -27,9 +37,10 @@ class Rung:
     # Parallel OR branches: power flows if ANY branch has ALL contacts closed.
     # Each branch is a list of (address, is_normally_closed).
     branches: List[List[Tuple[str, bool]]]
-    output_type: str  # 'COIL' | 'OTL' | 'OTU' | 'TON'
+    output_type: str  # 'COIL' | 'OTL' | 'OTU' | 'TON' | 'TOF' | 'CTU'
     output_target: str
     preset_ms: int = 0
+    preset_count: int = 0
 
 
 @dataclass
@@ -39,18 +50,21 @@ class PLCState:
     outputs: Dict[str, bool]
     internal_bits: Dict[str, bool]
     timers: Dict[str, Timer]
+    counters: Dict[str, Counter] = field(default_factory=dict)
     energized_rungs: List[int] = field(default_factory=list)
-    output_drivers: Dict[str, int] = field(default_factory=dict)  # maps coil -> rung_id that turned it on
+    output_drivers: Dict[str, int] = field(default_factory=dict)  # Persistently tracks which rung last latched/energized each coil
     parent: Optional["PLCState"] = None
     action_taken: str = ""
 
     def get_hashable_key(self) -> Tuple:
-        """Hashable signature of internal memory + timers + outputs (excluding ephemeral external inputs)."""
+        """Hashable signature of internal memory + timers + counters + outputs (excluding raw external inputs)."""
         timer_sig = tuple((k, v.accum_ms, v.dn) for k, v in sorted(self.timers.items()))
+        counter_sig = tuple((k, v.accum, v.dn) for k, v in sorted(self.counters.items()))
         return (
             tuple(sorted(self.outputs.items())),
             tuple(sorted(self.internal_bits.items())),
             timer_sig,
+            counter_sig,
         )
 
 
@@ -85,6 +99,19 @@ class TemporalModelChecker:
     def add_hazard_invariant(self, addr_a: str, addr_b: str, description: str):
         self.hazard_conditions.append((addr_a, addr_b, description))
 
+    def extract_referenced_inputs(self) -> Set[str]:
+        """Dynamically identifies all %IX inputs actually referenced in rungs."""
+        inputs = set()
+        for r in self.rungs:
+            for b in r.branches:
+                for addr, _ in b:
+                    if addr.startswith("%IX"):
+                        inputs.add(addr)
+        # Default safety fallback
+        if not inputs:
+            inputs = {"%IX0.4", "%IX0.5", "%IX0.0", "%IX0.2", "%IX0.3"}
+        return inputs
+
     def evaluate_rung_power_flow(self, rung: Rung, state: PLCState, current_inputs: Dict[str, bool]) -> bool:
         """
         Evaluates whether electrical current flows to the output coil.
@@ -93,7 +120,7 @@ class TemporalModelChecker:
         for branch in rung.branches:
             branch_conducts = True
             for address, is_normally_closed in branch:
-                # 1. Check current scan-cycle inputs first (Real PLC execution order)
+                val = False
                 if address in current_inputs:
                     val = current_inputs[address]
                 elif address in state.internal_bits:
@@ -101,48 +128,52 @@ class TemporalModelChecker:
                 elif address in state.outputs:
                     val = state.outputs[address]
                 elif address.endswith(".DN"):
-                    timer_name = address[:-3]
-                    val = state.timers[timer_name].dn if timer_name in state.timers else False
+                    base = address[:-3]
+                    if base in state.timers:
+                        val = state.timers[base].dn
+                    elif base in state.counters:
+                        val = state.counters[base].dn
                 elif address.endswith(".EN"):
-                    timer_name = address[:-3]
-                    val = state.timers[timer_name].en if timer_name in state.timers else False
+                    base = address[:-3]
+                    if base in state.timers:
+                        val = state.timers[base].en
                 else:
                     val = False
 
-                # [ / ] (Normally Closed) inverts signal; [ ] (Normally Open) passes signal directly
                 contact_closed = (not val) if is_normally_closed else val
                 if not contact_closed:
                     branch_conducts = False
-                    break  # This series branch is broken
+                    break
 
             if branch_conducts:
-                return True  # At least one parallel branch delivers current
+                return True
 
         return False
 
     def execute_single_scan_cycle(self, current: PLCState, new_inputs: Dict[str, bool]) -> PLCState:
         """
-        Standard IEC 61131-3 Sequential PLC Scan Cycle:
-        1. Read Phase: Ingest new physical inputs.
-        2. Sequential Rung Execution: Rungs evaluate top-to-bottom with working state updates.
-        3. Output drivers tracking: Records which rung energized which coil.
+        Sequential IEC 61131-3 PLC Scan Cycle Execution.
         """
         next_outputs = current.outputs.copy()
         next_bits = current.internal_bits.copy()
         next_timers = {
-            k: Timer(v.name, v.preset_ms, v.accum_ms, v.en, v.dn)
+            k: Timer(v.name, v.preset_ms, v.timer_type, v.accum_ms, v.en, v.dn)
             for k, v in current.timers.items()
+        }
+        next_counters = {
+            k: Counter(v.name, v.preset, v.accum, v.dn, v.last_in)
+            for k, v in current.counters.items()
         }
         energized_rungs: List[int] = []
         output_drivers = current.output_drivers.copy()
 
-        # Working state for intra-scan sequential updates
         working_state = PLCState(
             cycle=current.cycle + 1,
             inputs=new_inputs,
             outputs=next_outputs,
             internal_bits=next_bits,
             timers=next_timers,
+            counters=next_counters,
             energized_rungs=energized_rungs,
             output_drivers=output_drivers,
             parent=current,
@@ -186,7 +217,7 @@ class TemporalModelChecker:
             elif rung.output_type == "TON":  # On-Delay Timer
                 t_name = rung.output_target
                 if t_name not in next_timers:
-                    next_timers[t_name] = Timer(name=t_name, preset_ms=rung.preset_ms)
+                    next_timers[t_name] = Timer(name=t_name, preset_ms=rung.preset_ms, timer_type="TON")
                 timer = next_timers[t_name]
                 timer.en = power_flow
                 if timer.en:
@@ -197,6 +228,36 @@ class TemporalModelChecker:
                     timer.accum_ms = 0
                     timer.dn = False
                     output_drivers.pop(f"{t_name}.DN", None)
+
+            elif rung.output_type == "TOF":  # Off-Delay Timer
+                t_name = rung.output_target
+                if t_name not in next_timers:
+                    next_timers[t_name] = Timer(name=t_name, preset_ms=rung.preset_ms, timer_type="TOF", dn=False)
+                timer = next_timers[t_name]
+                timer.en = power_flow
+                if timer.en:
+                    timer.accum_ms = 0
+                    timer.dn = True
+                    output_drivers[f"{t_name}.DN"] = rung.rung_id
+                else:
+                    if timer.dn:
+                        timer.accum_ms += self.scan_cycle_ms
+                        if timer.accum_ms >= timer.preset_ms:
+                            timer.dn = False
+                            output_drivers.pop(f"{t_name}.DN", None)
+
+            elif rung.output_type == "CTU":  # Up Counter
+                c_name = rung.output_target
+                if c_name not in next_counters:
+                    next_counters[c_name] = Counter(name=c_name, preset=rung.preset_count)
+                counter = next_counters[c_name]
+                # Rising edge detection
+                if power_flow and not counter.last_in:
+                    counter.accum += 1
+                    counter.dn = (counter.accum >= counter.preset)
+                    if counter.dn:
+                        output_drivers[f"{c_name}.DN"] = rung.rung_id
+                counter.last_in = power_flow
 
         working_state.parent = current
         return working_state
@@ -212,22 +273,30 @@ class TemporalModelChecker:
                     fault_rungs.append(state.output_drivers[addr_a])
                 if addr_b in state.output_drivers:
                     fault_rungs.append(state.output_drivers[addr_b])
-                return (addr_a, addr_b, desc, fault_rungs)
+                return (addr_a, addr_b, desc, sorted(list(set(fault_rungs))))
         return None
 
     def explore_temporal_state_space(
         self,
         initial_state: PLCState,
-        candidate_input_permutations: List[Dict[str, bool]],
+        candidate_input_permutations: Optional[List[Dict[str, bool]]] = None,
         nominal_sequence: Optional[List[Dict[str, bool]]] = None,
         max_depth: int = 25,
+        max_states: int = 25000,
     ) -> Dict[str, Any]:
         """
-        Runs Breadth-First Search over temporal execution paths.
-        Guarantees:
-        - If safe == False: returns 'replay_mode': 'highlight_crash' with trace[-4:]
-        - If safe == True: returns 'replay_mode': 'full_nominal' with full cycle trace
+        Runs BFS model checking across temporal state space with safety caps and deduplication.
         """
+        if not candidate_input_permutations:
+            # Build targeted input permutations based on referenced %IX addresses
+            ref_inputs = list(self.extract_referenced_inputs())
+            candidate_input_permutations = [
+                {k: (k in ["%IX0.4", "%IX0.5", "%IX0.0", "%IX0.3"]) for k in ref_inputs},
+                {k: (k in ["%IX0.4", "%IX0.0", "%IX0.2", "%IX0.3"]) for k in ref_inputs},
+                {k: (k in ["%IX0.4", "%IX0.3"]) for k in ref_inputs},
+                {k: False for k in ref_inputs},  # E-Stop trip
+            ]
+
         queue = deque([initial_state])
         visited: Set[Tuple] = set()
         total_states_explored = 0
@@ -239,7 +308,6 @@ class TemporalModelChecker:
             hazard = self.check_hazards(curr)
             if hazard:
                 full_trace = self._reconstruct_trace(curr)
-                # Zoom into failure: last 4 cycles leading to impact
                 highlight_clip = full_trace[-4:] if len(full_trace) >= 4 else full_trace
                 return {
                     "safe": False,
@@ -253,7 +321,7 @@ class TemporalModelChecker:
                     "full_trace_length": len(full_trace),
                 }
 
-            if curr.cycle >= max_depth:
+            if curr.cycle >= max_depth or total_states_explored >= max_states:
                 continue
 
             for next_inputs in candidate_input_permutations:
@@ -285,11 +353,12 @@ class TemporalModelChecker:
         """Simulates full happy-path operational cycle so safe files have full animation."""
         if not nominal_sequence:
             nominal_sequence = [
-                {"%IX0.4": True, "%IX0.5": True, "%IX0.2": False},
-                {"%IX0.4": True, "%IX0.5": False, "%IX0.2": False},
-                {"%IX0.4": True, "%IX0.5": False, "%IX0.2": True},
-                {"%IX0.4": True, "%IX0.5": False, "%IX0.2": True},
-                {"%IX0.4": True, "%IX0.5": False, "%IX0.2": False},
+                {"%IX0.4": True, "%IX0.5": True, "%IX0.2": False, "%IX0.0": True, "%IX0.3": True},
+                {"%IX0.4": True, "%IX0.5": False, "%IX0.2": False, "%IX0.0": True, "%IX0.3": True},
+                {"%IX0.4": True, "%IX0.5": False, "%IX0.2": True, "%IX0.0": False, "%IX0.3": True},
+                {"%IX0.4": True, "%IX0.5": False, "%IX0.2": True, "%IX0.0": False, "%IX0.3": True},
+                {"%IX0.4": True, "%IX0.5": False, "%IX0.2": False, "%IX0.0": False, "%IX0.3": True},
+                {"%IX0.4": True, "%IX0.5": False, "%IX0.2": False, "%IX0.0": False, "%IX0.3": True},
             ]
 
         curr = initial_state

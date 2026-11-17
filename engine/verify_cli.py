@@ -1,20 +1,23 @@
 """
 RelayGhost: Command-Line Verification Harness.
 Invoked by developers, CI/CD, and Kiro hooks (safety-gate.json).
+Accepts file path via CLI argument OR via JSON on STDIN (Kiro 1.x PostFileSave format).
 Returns exit code 0 if verified safe, exit code 1 if a temporal hazard is detected.
 """
 
 import sys
 import os
 import json
+from pathlib import Path
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+# Robust root path resolution so Kiro can invoke from any working directory
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from engine.plc_parser import parse_plc_file
 from engine.plc_model_checker import TemporalModelChecker, PLCState
 
 
-def verify_file(file_path: str, max_depth: int = 15) -> int:
+def verify_file(file_path: str, max_depth: int = 20) -> int:
     if not os.path.exists(file_path):
         print(f"❌ Error: File not found: {file_path}", file=sys.stderr)
         return 2
@@ -73,11 +76,36 @@ def verify_file(file_path: str, max_depth: int = 15) -> int:
         return 0
 
 
+def resolve_file_path() -> Optional[str]:
+    """Resolves target file path from CLI argument or Kiro STDIN JSON."""
+    if len(sys.argv) > 1:
+        return sys.argv[1]
+
+    # Check STDIN for Kiro hook JSON payload
+    if not sys.stdin.isatty():
+        try:
+            stdin_data = sys.stdin.read().strip()
+            if stdin_data:
+                # Could be raw path or JSON payload
+                if stdin_data.startswith("{"):
+                    payload = json.loads(stdin_data)
+                    return (
+                        payload.get("path")
+                        or payload.get("file_path")
+                        or payload.get("file", {}).get("path")
+                        or payload.get("filePath")
+                    )
+                return stdin_data
+        except Exception:
+            pass
+    return None
+
+
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python3 engine/verify_cli.py <path_to_plc_file>")
+    target_file = resolve_file_path()
+    if not target_file:
+        print("Usage: python3 engine/verify_cli.py <path_to_plc_file> (or pipe JSON to STDIN)")
         sys.exit(2)
 
-    target_file = sys.argv[1]
     exit_code = verify_file(target_file)
     sys.exit(exit_code)
