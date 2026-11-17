@@ -291,7 +291,7 @@ export default function Home() {
 
       {/* Footer */}
       <footer className="border-t border-slate-800/80 bg-slate-950 px-6 py-4 mt-8 text-center text-xs font-mono text-slate-500">
-        RelayGhost • Kiroween 2026 Hackathon • Built with Next.js 15, Three.js & FastMCP • MIT License
+        RelayGhost • Autonomous Industrial SCADA Safety Verifier • Built with Next.js 15, Three.js & FastMCP • MIT License
       </footer>
     </div>
   );

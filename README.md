@@ -146,12 +146,12 @@ Add the FastMCP server in your Kiro IDE settings (`~/.kiro/settings/mcp.json`):
 
 ---
 
-## 🏆 Hackathon Eligibility
+## 🏢 Industrial Applications & Target Sectors
 
-- **Event:** Kiroween 2026 ($100,000 Pool)
-- **Primary Track:** **Resurrection** (Reviving 1968 Modicon Ladder Logic via modern agentic AI)
-- **Bonus Track:** **Best Startup Project** (Targeting the $22,000/minute industrial downtime crisis)
-- **Toolchain:** Fully spec-driven with Kiro IDE, FastMCP, and automated Kiro Agent Hooks.
+- **Automotive & Metal Stamping:** Hydraulic press line interlocking, robotic transfer clearance, and die damage prevention.
+- **Packaging & Material Handling:** High-speed conveyor routing, diverter gate synchronization, and sorting table sequencing.
+- **Safety Instrument Systems (SIS):** Continuous formal compliance verification against IEC 61131-3, IEC 61508 (SIL 2/3), and ISO 13849 PLd/e safety lifecycles.
+- **Agentic Dev-Tools:** Continuous verification in automated PLC build pipelines via Kiro IDE, FastMCP, and pre-commit agent hooks.
 
 ---
 
