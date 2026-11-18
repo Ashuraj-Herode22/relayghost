@@ -2,12 +2,14 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { ReplayFrame } from "@/lib/plcVerifier";
 
 interface WorkcellCanvasProps {
   currentFrame?: ReplayFrame;
   isCollision?: boolean;
   isSafe?: boolean;
+  collisionDescription?: string | null;
 }
 
 /**
@@ -141,7 +143,12 @@ class IndustrialAudioSynthesizer {
   }
 }
 
-export default function WorkcellCanvas({ currentFrame, isCollision, isSafe }: WorkcellCanvasProps) {
+export default function WorkcellCanvas({
+  currentFrame,
+  isCollision,
+  isSafe,
+  collisionDescription,
+}: WorkcellCanvasProps) {
   const mountRef = useRef<HTMLDivElement>(null);
   const [cameraView, setCameraView] = useState<"iso" | "die" | "top">("iso");
   const [isMuted, setIsMuted] = useState<boolean>(false);
@@ -155,32 +162,39 @@ export default function WorkcellCanvas({ currentFrame, isCollision, isSafe }: Wo
     pressY: number;
     armX: number;
     conveyorScale: number;
-    clampZ: number;
+    jaw1X: number;
+    jaw2X: number;
+    isPumpActive: boolean;
     laserOpacity: number;
     beaconIntensity: number;
     cameraPos: THREE.Vector3;
     cameraLook: THREE.Vector3;
     isShaking: boolean;
+    isUserInteracting: boolean;
   }>({
     pressY: 3.1,
     armX: 0.0,
     conveyorScale: 1.0,
-    clampZ: 2.2,
+    jaw1X: -0.72,
+    jaw2X: 0.72,
+    isPumpActive: false,
     laserOpacity: 0.15,
     beaconIntensity: 0,
     cameraPos: new THREE.Vector3(0, 4.4, 9.6),
     cameraLook: new THREE.Vector3(0, 0.8, 0),
     isShaking: false,
+    isUserInteracting: false,
   });
 
   const sceneRef = useRef<{
     scene: THREE.Scene;
     camera: THREE.PerspectiveCamera;
     renderer: THREE.WebGLRenderer;
+    controls: OrbitControls;
     pressRam: THREE.Mesh;
     transferArm: THREE.Group;
     conveyorBelt: THREE.Mesh;
-    clampJaws: THREE.Group;
+    clampJaws: { jaw1: THREE.Mesh; jaw2: THREE.Mesh };
     pumpValve: THREE.Mesh;
     laserCurtain: THREE.Mesh;
     beaconLight: THREE.PointLight;
@@ -224,7 +238,7 @@ export default function WorkcellCanvas({ currentFrame, isCollision, isSafe }: Wo
     mountRef.current.replaceChildren();
 
     const width = mountRef.current.clientWidth || 600;
-    const height = mountRef.current.clientHeight || 420;
+    const height = mountRef.current.clientHeight || 440;
 
     // 1. Scene, Camera, Renderer with Studio Exponential Fog
     const scene = new THREE.Scene();
@@ -235,7 +249,11 @@ export default function WorkcellCanvas({ currentFrame, isCollision, isSafe }: Wo
     camera.position.set(0, 4.4, 9.6);
     camera.lookAt(0, 0.8, 0);
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
+    const renderer = new THREE.WebGLRenderer({
+      antialias: true,
+      alpha: true,
+      powerPreference: "high-performance",
+    });
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -243,6 +261,20 @@ export default function WorkcellCanvas({ currentFrame, isCollision, isSafe }: Wo
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     mountRef.current.appendChild(renderer.domElement);
+
+    // OrbitControls for smooth 3D inspection
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.target.set(0, 0.8, 0);
+    controls.maxPolarAngle = Math.PI / 2 + 0.02; // Do not dip under floor
+    controls.minDistance = 2.5;
+    controls.maxDistance = 24.0;
+
+    // Track user drag so auto-camera doesn't fight manual orbiting
+    controls.addEventListener("start", () => {
+      kinematicsTargetRef.current.isUserInteracting = true;
+    });
 
     // 2. Studio 3-Point Lighting Setup
     const ambientLight = new THREE.HemisphereLight(0x334155, 0x06070a, 1.4);
@@ -369,19 +401,22 @@ export default function WorkcellCanvas({ currentFrame, isCollision, isSafe }: Wo
     scene.add(conveyorBelt);
 
     // 8. Diverter Clamp (%QX0.3)
-    const clampJaws = new THREE.Group();
     const jawMat = new THREE.MeshStandardMaterial({ color: 0x10b981, metalness: 0.7, roughness: 0.3 });
     const jaw1 = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.32, 0.45), jawMat);
     jaw1.position.set(-0.72, 0.12, 2.3);
     const jaw2 = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.32, 0.45), jawMat);
     jaw2.position.set(0.72, 0.12, 2.3);
-    clampJaws.add(jaw1);
-    clampJaws.add(jaw2);
-    scene.add(clampJaws);
+    scene.add(jaw1);
+    scene.add(jaw2);
 
-    // 9. Solenoid Relief Valve (%QX0.4)
+    // 9. Solenoid Relief Valve / Motor (%QX0.4)
     const valveGeo = new THREE.CylinderGeometry(0.22, 0.22, 0.55, 16);
-    const valveMat = new THREE.MeshStandardMaterial({ color: 0x8b5cf6, metalness: 0.85, roughness: 0.25 });
+    const valveMat = new THREE.MeshStandardMaterial({
+      color: 0x8b5cf6,
+      metalness: 0.85,
+      roughness: 0.25,
+      emissive: 0x000000,
+    });
     const pumpValve = new THREE.Mesh(valveGeo, valveMat);
     pumpValve.position.set(2.45, 0.12, 0);
     scene.add(pumpValve);
@@ -422,10 +457,11 @@ export default function WorkcellCanvas({ currentFrame, isCollision, isSafe }: Wo
       scene,
       camera,
       renderer,
+      controls,
       pressRam,
       transferArm,
       conveyorBelt,
-      clampJaws,
+      clampJaws: { jaw1, jaw2 },
       pumpValve,
       laserCurtain,
       beaconLight,
@@ -444,18 +480,33 @@ export default function WorkcellCanvas({ currentFrame, isCollision, isSafe }: Wo
         pressRam.position.y = THREE.MathUtils.lerp(pressRam.position.y, targets.pressY, 0.22);
         transferArm.position.x = THREE.MathUtils.lerp(transferArm.position.x, targets.armX, 0.22);
         conveyorBelt.scale.z = THREE.MathUtils.lerp(conveyorBelt.scale.z, targets.conveyorScale, 0.2);
-        clampJaws.position.z = THREE.MathUtils.lerp(clampJaws.position.z, targets.clampZ, 0.2);
-        beaconLight.intensity = THREE.MathUtils.lerp(beaconLight.intensity, targets.beaconIntensity, 0.25);
 
-        // Smooth camera transitions between Isometric / Die Zoom / Top View
-        camera.position.lerp(targets.cameraPos, 0.09);
+        // Clamping motion on %QX0.3
+        jaw1.position.x = THREE.MathUtils.lerp(jaw1.position.x, targets.jaw1X, 0.22);
+        jaw2.position.x = THREE.MathUtils.lerp(jaw2.position.x, targets.jaw2X, 0.22);
 
-        // Subtle Camera Micro-Shake on Breach Impact Frame
-        if (targets.isShaking) {
-          camera.position.x += (Math.random() - 0.5) * 0.04;
-          camera.position.y += (Math.random() - 0.5) * 0.04;
+        // Valve rotation on %QX0.4
+        if (targets.isPumpActive) {
+          pumpValve.rotation.y += 0.12;
         }
 
+        beaconLight.intensity = THREE.MathUtils.lerp(beaconLight.intensity, targets.beaconIntensity, 0.25);
+
+        // Continuous swirl of spark particles on collision
+        if (targets.isShaking) {
+          sparkParticles.rotation.y += 0.05;
+        }
+
+        // Camera target lerp when user is NOT actively dragging
+        if (!targets.isUserInteracting) {
+          const shakeX = targets.isShaking ? (Math.random() - 0.5) * 0.05 : 0;
+          const shakeY = targets.isShaking ? (Math.random() - 0.5) * 0.05 : 0;
+          const targetWithShake = targets.cameraPos.clone().add(new THREE.Vector3(shakeX, shakeY, 0));
+          camera.position.lerp(targetWithShake, 0.09);
+          controls.target.lerp(targets.cameraLook, 0.09);
+        }
+
+        controls.update();
         renderer.render(scene, camera);
       }
     };
@@ -464,7 +515,7 @@ export default function WorkcellCanvas({ currentFrame, isCollision, isSafe }: Wo
     const handleResize = () => {
       if (!mountRef.current) return;
       const w = mountRef.current.clientWidth || 600;
-      const h = mountRef.current.clientHeight || 420;
+      const h = mountRef.current.clientHeight || 440;
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
@@ -476,30 +527,35 @@ export default function WorkcellCanvas({ currentFrame, isCollision, isSafe }: Wo
     return () => {
       resizeObserver.disconnect();
       cancelAnimationFrame(animId);
+      controls.dispose();
       renderer.dispose();
       if (mountRef.current) mountRef.current.replaceChildren();
     };
   }, []);
 
   // Update Camera View Presets
-  useEffect(() => {
+  const handleSelectCameraView = (view: "iso" | "die" | "top") => {
+    setCameraView(view);
     const targets = kinematicsTargetRef.current;
-    if (cameraView === "iso") {
+    targets.isUserInteracting = false; // Reset user interaction lock so preset applies cleanly
+
+    if (view === "iso") {
       targets.cameraPos = new THREE.Vector3(0, 4.4, 9.6);
       targets.cameraLook = new THREE.Vector3(0, 0.8, 0);
-    } else if (cameraView === "die") {
+    } else if (view === "die") {
       targets.cameraPos = new THREE.Vector3(0.55, 1.45, 3.6);
       targets.cameraLook = new THREE.Vector3(0.15, 0.75, 0);
-    } else if (cameraView === "top") {
-      targets.cameraPos = new THREE.Vector3(0, 10.2, 0.1);
+    } else if (view === "top") {
+      // High-angle isometric top view (gimbal-free, shows all 6 actuators)
+      targets.cameraPos = new THREE.Vector3(0, 9.8, 2.4);
       targets.cameraLook = new THREE.Vector3(0, 0, 0);
     }
-  }, [cameraView]);
+  };
 
   // Update Kinematics Targets and Audio based on active ReplayFrame
   useEffect(() => {
     if (!sceneRef.current) return;
-    const { pressRam, laserCurtain, sparkParticles, rimLight } = sceneRef.current;
+    const { pressRam, pumpValve, laserCurtain, sparkParticles, rimLight } = sceneRef.current;
     const targets = kinematicsTargetRef.current;
 
     const outputs = currentFrame?.outputs || {};
@@ -514,7 +570,9 @@ export default function WorkcellCanvas({ currentFrame, isCollision, isSafe }: Wo
     targets.pressY = isPressDown ? 0.45 : 3.1;
     targets.armX = isArmIn ? 1.62 : 0.0;
     targets.conveyorScale = isConveyorOn ? 1.05 : 1.0;
-    targets.clampZ = isClampShut ? 2.05 : 2.3;
+    targets.jaw1X = isClampShut ? -0.44 : -0.72;
+    targets.jaw2X = isClampShut ? 0.44 : 0.72;
+    targets.isPumpActive = isPumpOpen;
     targets.beaconIntensity = isAlarm ? 4.5 : 0;
     targets.isShaking = Boolean(isCollision);
 
@@ -527,7 +585,8 @@ export default function WorkcellCanvas({ currentFrame, isCollision, isSafe }: Wo
           isPressDown !== !!prevOutputsRef.current["%QX0.0"] ||
           isArmIn !== !!prevOutputsRef.current["%QX0.1"] ||
           isConveyorOn !== !!prevOutputsRef.current["%QX0.2"] ||
-          isClampShut !== !!prevOutputsRef.current["%QX0.3"];
+          isClampShut !== !!prevOutputsRef.current["%QX0.3"] ||
+          isPumpOpen !== !!prevOutputsRef.current["%QX0.4"];
         if (moved) {
           audioRef.current.playServoHum();
         }
@@ -540,7 +599,6 @@ export default function WorkcellCanvas({ currentFrame, isCollision, isSafe }: Wo
     if (isCollision) {
       (pressRam.material as THREE.MeshStandardMaterial).emissive.setHex(0xff0044);
       (sparkParticles.material as THREE.PointsMaterial).opacity = 1.0;
-      sparkParticles.rotation.y += 0.3;
       rimLight.color.setHex(0xef4444);
     } else if (isSafe) {
       (pressRam.material as THREE.MeshStandardMaterial).emissive.setHex(0x064e3b);
@@ -552,35 +610,52 @@ export default function WorkcellCanvas({ currentFrame, isCollision, isSafe }: Wo
       rimLight.color.setHex(0xf59e0b);
     }
 
+    if (isPumpOpen) {
+      (pumpValve.material as THREE.MeshStandardMaterial).emissive.setHex(0x581c87);
+    } else {
+      (pumpValve.material as THREE.MeshStandardMaterial).emissive.setHex(0x000000);
+    }
+
     (laserCurtain.material as THREE.MeshBasicMaterial).opacity = isAlarm ? 0.45 : 0.15;
   }, [currentFrame, isCollision, isSafe]);
 
-  const cycleDisplay = currentFrame ? `CYCLE ${String(currentFrame.cycle).padStart(2, "0")} · ${currentFrame.timestamp_ms}ms` : "STANDBY";
+  const cycleDisplay = currentFrame
+    ? `CYCLE ${String(currentFrame.cycle).padStart(2, "0")} · ${currentFrame.timestamp_ms}ms`
+    : "STANDBY";
 
   return (
-    <div className="relative w-full h-full min-h-[420px] rounded-2xl overflow-hidden bg-[#06070A] border border-white/[0.08] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)]">
+    <div className="relative w-full h-full min-h-[420px] rounded-2xl overflow-hidden bg-[#06070A] border border-white/[0.08] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)] group">
       {/* Dynamic Radial Ambient Viewport Glow */}
-      <div className={`absolute inset-0 pointer-events-none transition-all duration-700 ${
-        isCollision ? "ambient-glow-hazard" : isSafe ? "ambient-glow-safe" : ""
-      }`} />
+      <div
+        className={`absolute inset-0 pointer-events-none transition-all duration-700 ${
+          isCollision ? "ambient-glow-hazard" : isSafe ? "ambient-glow-safe" : ""
+        }`}
+      />
 
-      {/* Three.js Canvas Container */}
-      <div ref={mountRef} className="w-full h-full" />
+      {/* Three.js Canvas Container (Interactive Orbit Controls) */}
+      <div ref={mountRef} className="w-full h-full cursor-grab active:cursor-grabbing" />
+
+      {/* Subtle Drag-To-Orbit Hint (Disappears on hover) */}
+      <div className="absolute bottom-3 left-3 bg-black/60 backdrop-blur-md px-2 py-1 rounded-md border border-white/[0.06] text-[10px] font-mono text-slate-400 pointer-events-none opacity-60 group-hover:opacity-100 transition">
+        <span>🖱️ Drag to rotate · Scroll to zoom</span>
+      </div>
 
       {/* Top Floating HUD Bar: Left Telemetry Pill + Right Viewport Controls */}
       <div className="absolute top-3.5 inset-x-3.5 flex flex-wrap items-center justify-between gap-2 pointer-events-none z-10">
         {/* Left Telemetry Status Pill */}
-        <div className="bg-[#0C0E14]/85 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/[0.08] text-[11px] font-mono text-slate-300 flex items-center space-x-2 pointer-events-auto shadow-lg">
-          <span className={`w-2 h-2 rounded-full ${
-            isCollision ? "bg-rose-500 animate-ping" : isSafe ? "bg-emerald-400" : "bg-amber-400 animate-pulse"
-          }`} />
+        <div className="bg-[#0C0E14]/90 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/[0.08] text-[11px] font-mono text-slate-300 flex items-center space-x-2 pointer-events-auto shadow-lg">
+          <span
+            className={`w-2 h-2 rounded-full ${
+              isCollision ? "bg-rose-500 animate-ping" : isSafe ? "bg-emerald-400" : "bg-amber-400 animate-pulse"
+            }`}
+          />
           <span className="font-semibold text-white tracking-wide">{cycleDisplay}</span>
           <span className="text-slate-500">|</span>
           <span className="text-[10px] text-slate-400 hidden sm:inline">6 UNIVERSAL ACTUATORS</span>
         </div>
 
         {/* Right Unified Controls: Audio Synthesizer + Camera Views */}
-        <div className="bg-[#0C0E14]/85 backdrop-blur-md p-1 rounded-full border border-white/[0.08] text-[11px] font-mono flex items-center space-x-1 pointer-events-auto shadow-lg">
+        <div className="bg-[#0C0E14]/90 backdrop-blur-md p-1 rounded-full border border-white/[0.08] text-[11px] font-mono flex items-center space-x-1 pointer-events-auto shadow-lg">
           {/* Audio Synthesizer Toggle */}
           <button
             onClick={toggleMute}
@@ -598,7 +673,7 @@ export default function WorkcellCanvas({ currentFrame, isCollision, isSafe }: Wo
 
           {/* Camera Angles */}
           <button
-            onClick={() => setCameraView("iso")}
+            onClick={() => handleSelectCameraView("iso")}
             className={`px-2.5 py-1 rounded-full transition ${
               cameraView === "iso" ? "bg-white text-slate-950 font-bold shadow" : "text-slate-400 hover:text-white"
             }`}
@@ -606,7 +681,7 @@ export default function WorkcellCanvas({ currentFrame, isCollision, isSafe }: Wo
             Iso
           </button>
           <button
-            onClick={() => setCameraView("die")}
+            onClick={() => handleSelectCameraView("die")}
             className={`px-2.5 py-1 rounded-full transition ${
               cameraView === "die" ? "bg-amber-400 text-slate-950 font-bold shadow" : "text-slate-400 hover:text-white"
             }`}
@@ -614,7 +689,7 @@ export default function WorkcellCanvas({ currentFrame, isCollision, isSafe }: Wo
             Die Zoom
           </button>
           <button
-            onClick={() => setCameraView("top")}
+            onClick={() => handleSelectCameraView("top")}
             className={`px-2.5 py-1 rounded-full transition ${
               cameraView === "top" ? "bg-white text-slate-950 font-bold shadow" : "text-slate-400 hover:text-white"
             }`}
@@ -627,9 +702,13 @@ export default function WorkcellCanvas({ currentFrame, isCollision, isSafe }: Wo
       {/* Cinematic Collision Breach Warning */}
       {isCollision && (
         <div className="absolute inset-0 border-2 border-rose-500/70 pointer-events-none flex items-center justify-center p-4">
-          <div className="bg-rose-950/90 backdrop-blur-md border border-rose-500/80 px-5 py-2.5 rounded-xl shadow-2xl text-rose-100 font-mono text-xs font-bold tracking-wider animate-bounce flex items-center space-x-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping" />
-            <span>CRITICAL INVARIANT BREACH: %QX0.0 PRESS & %QX0.1 ARM COLLISION</span>
+          <div className="bg-rose-950/90 backdrop-blur-md border border-rose-500/80 px-5 py-2.5 rounded-xl shadow-2xl text-rose-100 font-mono text-xs font-bold tracking-wider animate-bounce flex items-center space-x-2 max-w-[90%] text-center">
+            <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping shrink-0" />
+            <span className="truncate">
+              {collisionDescription
+                ? `CRITICAL BREACH: ${collisionDescription}`
+                : "CRITICAL INVARIANT BREACH: CONFLICTING ACTUATORS IN ACTIVE INTERFERENCE"}
+            </span>
           </div>
         </div>
       )}

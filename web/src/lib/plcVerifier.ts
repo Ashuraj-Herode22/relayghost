@@ -667,10 +667,11 @@ export function patchLadderLogicWithInterlocks(
   const cA = collisionCoils[0] || "%QX0.0";
   const cB = collisionCoils[1] || "%QX0.1";
 
+  // Mutual exclusion: cA gets [ / cB ], cB gets [ / cA ]
   let patched = rungs.map((r) => {
-    // If rung drives cA, ensure [ / cB ]
+    let branches = r.branches;
     if (r.output_target === cA) {
-      const branches = r.branches.map((b) => {
+      branches = branches.map((b) => {
         let has = false;
         const nb = b.map(([addr, isNc]) => {
           if (addr === cB) {
@@ -682,11 +683,9 @@ export function patchLadderLogicWithInterlocks(
         if (!has) nb.push([cB, true]);
         return nb;
       });
-      return { ...r, branches, isNewInterlock: true };
     }
-    // If rung drives cB, ensure [ / cA ]
     if (r.output_target === cB) {
-      const branches = r.branches.map((b) => {
+      branches = branches.map((b) => {
         let has = false;
         const nb = b.map(([addr, isNc]) => {
           if (addr === cA) {
@@ -698,44 +697,98 @@ export function patchLadderLogicWithInterlocks(
         if (!has) nb.push([cA, true]);
         return nb;
       });
-      return { ...r, branches, isNewInterlock: true };
     }
-    return r;
+    return { ...r, branches };
   });
 
-  // Ensure both conflicting coils have an unlatch transition if using OTL
+  // For each conflicting coil, check if it is OTL and needs an unlatch transition
   for (const c of [cA, cB]) {
     const isOtl = patched.some((r) => r.output_target === c && r.output_type === "OTL");
     const hasOtu = patched.some((r) => r.output_target === c && r.output_type === "OTU");
+    const other = c === cA ? cB : cA;
+
     if (isOtl && !hasOtu) {
-      const maxRungId = Math.max(...patched.map((r) => r.rung_id), 0);
-      patched.push({
-        rung_id: maxRungId + 1,
+      // Find if this coil has an associated timer
+      const timer = patched.find(
+        (r) =>
+          (r.output_type === "TON" || r.output_type === "TOF") &&
+          r.branches.some((b) => b.some(([addr]) => addr === c))
+      );
+
+      // Target unlatch trigger
+      const unlatchCondition: [string, boolean][] = timer
+        ? [[`${timer.output_target}.DN`, false]]
+        : [["%IX0.2", false]];
+
+      // Insert OTU immediately before the conflicting coil that needs to run next so intra-scan evaluation handoff is immediate!
+      const targetRungIndex = patched.findIndex((r) => r.output_target === other);
+      const otuRung: Rung = {
+        rung_id: 0,
         name: `Rung_${c}_Auto_Retract_OTU`,
-        branches: [[["%IX0.2", false]]], // When Arm Home (%IX0.2) or transfer complete, unlatch
+        branches: [unlatchCondition],
         output_type: "OTU",
         output_target: c,
         preset_ms: 0,
         isNewInterlock: true,
-      });
-    }
-  }
+      };
 
-  // Ensure secondary actuator has a productive sequential cascade trigger when primary actuator has cleared:
-  // Inject [ [ "%IX0.2", false ], [ cB, true ] ] into cA rung so press strokes when Arm is Home
-  for (const r of patched) {
-    if (r.output_target === cA && (r.output_type === "COIL" || r.output_type === "OTL")) {
-      const hasCascade = r.branches.some((b) => b.some(([addr]) => addr === "%IX0.2"));
-      if (!hasCascade) {
-        r.branches.push([["%IX0.2", false], [cB, true]]);
+      if (targetRungIndex >= 0) {
+        patched.splice(targetRungIndex, 0, otuRung);
+      } else {
+        patched.push(otuRung);
+      }
+
+      // If timer exists, guard the OTL rung with [ / timer.DN ] so it does not immediately relatch
+      if (timer) {
+        const dnTag = `${timer.output_target}.DN`;
+        for (const r of patched) {
+          if (r.output_target === c && r.output_type === "OTL") {
+            for (const b of r.branches) {
+              if (!b.some(([a]) => a === dnTag)) {
+                b.push([dnTag, true]);
+              }
+            }
+          }
+        }
+      }
+
+      // If other coil is triggered by timer.DN and is a COIL, add seal-in so it stays active
+      if (timer) {
+        const dnTag = `${timer.output_target}.DN`;
+        for (const r of patched) {
+          if (r.output_target === other && r.output_type === "COIL") {
+            if (r.branches.some((b) => b.some(([a]) => a === dnTag))) {
+              r.branches.push([[other, false], [c, true]]);
+            }
+          }
+        }
       }
     }
   }
 
+  // Sequential cascade for mechanical workcells (stamping press strokes after arm retracted)
+  for (const r of patched) {
+    if (r.output_target === "%QX0.0" && (r.output_type === "COIL" || r.output_type === "OTL")) {
+      const hasTimer = patched.some(
+        (x) =>
+          (x.output_type === "TON" || x.output_type === "TOF") &&
+          x.branches.some((b) => b.some(([a]) => a === "%QX0.0"))
+      );
+      if (!hasTimer) {
+        const hasCascade = r.branches.some((b) => b.some(([a]) => a === "%IX0.2"));
+        if (!hasCascade) {
+          r.branches.push([["%IX0.2", false], ["%QX0.1", true]]);
+        }
+      }
+    }
+  }
+
+  const result = patched.map((r, i) => ({ ...r, rung_id: i + 1, isNewInterlock: true }));
+
   const patchDescription = `Synthesized reciprocal normally-closed interlocks [ / ${cA} ] and [ / ${cB} ] with complete workcycle transition. Conflicting actuators operate in safe sequential cascade without deadlock.`;
   const deltaText = `Interlocks Synthesized: [ / ${cA} ] & [ / ${cB} ] with sequential unlatch cascade`;
 
-  return { patchedRungs: patched, patchDescription, deltaText };
+  return { patchedRungs: result, patchDescription, deltaText };
 }
 
 /**

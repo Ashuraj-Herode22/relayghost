@@ -28,6 +28,8 @@ export default function Home() {
   const [sourceName, setSourceName] = useState<string>(
     "01 · Stamping Press (Known Defect)"
   );
+  const [originalXml, setOriginalXml] = useState<string>("");
+  const [originalName, setOriginalName] = useState<string>("");
   const [deltaInfo, setDeltaInfo] = useState<{
     patchDescription: string;
     deltaText: string;
@@ -39,7 +41,7 @@ export default function Home() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Load and verify a preset or XML string
-  const loadAndVerify = (xml: string, label: string) => {
+  const loadAndVerify = (xml: string, label: string, isRevert: boolean = false) => {
     setIsLoading(true);
     setErrorMessage(null);
     setDeltaInfo(null);
@@ -50,6 +52,10 @@ export default function Home() {
       setVerificationResult(result);
       setCurrentFrameIndex(0);
       setSourceName(label);
+      if (!isRevert) {
+        setOriginalXml(xml);
+        setOriginalName(label);
+      }
     } catch (err: any) {
       console.error("Verification failed:", err);
       setErrorMessage(err.message || "Failed to parse or verify IEC 61131-3 PLCopen XML.");
@@ -115,7 +121,7 @@ export default function Home() {
       const result = executeModelChecker(patchedRungs);
       setVerificationResult(result);
       setCurrentFrameIndex(0);
-      setSourceName(`${sourceName} [Synthesized EARS Safe]`);
+      setSourceName(`${originalName || sourceName} [Synthesized EARS Safe]`);
       setDeltaInfo({
         patchDescription,
         deltaText,
@@ -126,6 +132,13 @@ export default function Home() {
       setErrorMessage(err.message || "Failed to synthesize interlocks.");
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  // Revert to original unpatched defect for instant before/after demo toggling
+  const handleRevertToOriginal = () => {
+    if (originalXml) {
+      loadAndVerify(originalXml, originalName, true);
     }
   };
 
@@ -140,9 +153,9 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-[#06070A] text-slate-100 flex flex-col font-sans selection:bg-amber-500/20 selection:text-amber-200">
       {/* 1. Top Command Bar (56px fixed height, glassmorphic backdrop) */}
-      <header className="h-14 border-b border-white/[0.08] bg-[#0C0E14]/80 backdrop-blur-md sticky top-0 z-50 px-4 lg:px-6 flex items-center justify-between gap-4">
+      <header className="h-14 border-b border-white/[0.08] bg-[#0C0E14]/85 backdrop-blur-md sticky top-0 z-50 px-3 sm:px-4 lg:px-6 flex items-center justify-between gap-3">
         {/* Left: Minimalist SVG Geometric Emblem + Wordmark */}
-        <div className="flex items-center space-x-3">
+        <div className="flex items-center space-x-2.5 shrink-0">
           <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-500 via-violet-600 to-rose-600 p-[1px] shadow-[0_0_15px_rgba(245,158,11,0.25)] flex items-center justify-center">
             <div className="w-full h-full bg-[#0C0E14] rounded-[7px] flex items-center justify-center">
               <svg className="w-4 h-4 text-amber-400" viewBox="0 0 24 24" fill="none">
@@ -183,8 +196,8 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Center: Segmented 3 Core Scenario Pills */}
-        <div className="hidden md:flex items-center">
+        {/* Center: Segmented Core Scenario Switcher (desktop) */}
+        <div className="hidden xl:flex items-center">
           <PresetBar
             selectedPresetId={selectedPresetId}
             onSelectPreset={handleSelectPreset}
@@ -192,12 +205,12 @@ export default function Home() {
         </div>
 
         {/* Right: Actions (Upload .XML, Sample .XML, Benchmark Suite) */}
-        <div className="flex items-center space-x-2 font-mono text-xs">
+        <div className="flex items-center space-x-2 font-mono text-xs shrink-0">
           {/* Quick Sample Download */}
           <button
             onClick={handleDownloadSample}
             className="px-2.5 py-1.5 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] text-slate-300 hover:text-white border border-white/[0.08] transition active:scale-95 text-[11px] hidden sm:flex items-center space-x-1"
-            title="Download sample IEC 61131-3 PLCopen XML"
+            title="Download sample IEC 61131-3 PLCopen XML program to test custom file upload"
           >
             <span>📥 Sample .xml</span>
           </button>
@@ -233,8 +246,8 @@ export default function Home() {
         </div>
       </header>
 
-      {/* Mobile Scenario Bar */}
-      <div className="md:hidden p-2.5 border-b border-white/[0.08] bg-[#0C0E14] flex justify-center">
+      {/* Sub-Bar for Tablets & Smaller Screens (< xl) */}
+      <div className="xl:hidden p-2 border-b border-white/[0.08] bg-[#0C0E14] flex justify-center">
         <PresetBar
           selectedPresetId={selectedPresetId}
           onSelectPreset={handleSelectPreset}
@@ -242,10 +255,10 @@ export default function Home() {
       </div>
 
       {/* Main Studio Workspace */}
-      <main className="flex-1 p-3.5 lg:p-5 flex flex-col space-y-3.5 max-w-[1720px] w-full mx-auto">
+      <main className="flex-1 p-3 lg:p-4 flex flex-col space-y-3 max-w-[1740px] w-full mx-auto">
         {/* Error Notification Banner if invalid XML is uploaded */}
         {errorMessage && (
-          <div className="p-3 bg-rose-950/80 border border-rose-500/80 rounded-xl text-xs font-mono text-rose-200 flex items-center justify-between shadow-xl animate-shake">
+          <div className="p-3 bg-rose-950/80 border border-rose-500/80 rounded-xl text-xs font-mono text-rose-200 flex items-center justify-between shadow-xl">
             <div className="flex items-center space-x-2">
               <span className="text-base">⚠️</span>
               <span>{errorMessage}</span>
@@ -260,15 +273,16 @@ export default function Home() {
         )}
 
         {/* 2. Main Split Stage (60% Left Digital Twin / 40% Right Ladder & EARS Inspector) */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-3.5 flex-1 min-h-0">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 flex-1 min-h-0">
           {/* Left Column (60% on desktop): 3D Viewport + Netflix Replay Scrubber */}
-          <div className="lg:col-span-7 flex flex-col space-y-3">
+          <div className="lg:col-span-7 flex flex-col space-y-2.5">
             {/* 3D Digital Twin Viewport */}
-            <div className="flex-1 min-h-[420px] lg:min-h-[460px] relative">
+            <div className="flex-1 min-h-[400px] lg:min-h-[460px] relative">
               <WorkcellCanvas
                 currentFrame={currentFrame}
                 isCollision={isCrashFrame}
                 isSafe={Boolean(verificationResult?.safe)}
+                collisionDescription={verificationResult?.hazard || undefined}
               />
             </div>
 
@@ -281,9 +295,9 @@ export default function Home() {
           </div>
 
           {/* Right Column (40% on desktop): Live Ladder Schematic & EARS Inspector */}
-          <div className="lg:col-span-5 flex flex-col space-y-3">
+          <div className="lg:col-span-5 flex flex-col space-y-2.5">
             {/* Top Card: Live Ladder Schematic Viewer */}
-            <div className="h-[310px] lg:h-[340px]">
+            <div className="h-[290px] lg:h-[320px]">
               <LadderViewer
                 rungs={currentRungs}
                 currentFrame={currentFrame}
@@ -293,13 +307,14 @@ export default function Home() {
             </div>
 
             {/* Bottom Card: Verification Diagnostic & Auto-Synthesis Panel */}
-            <div className="flex-1">
+            <div className="flex-1 min-h-[280px]">
               <VerificationReport
                 result={verificationResult}
                 rungs={currentRungs}
                 onSynthesizePatch={handleSynthesizePatch}
                 canPatch={Boolean(verificationResult && !verificationResult.safe)}
                 deltaInfo={deltaInfo}
+                onRevertToOriginal={handleRevertToOriginal}
               />
             </div>
           </div>

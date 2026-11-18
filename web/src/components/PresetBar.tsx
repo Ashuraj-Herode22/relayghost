@@ -38,6 +38,11 @@ export default function PresetBar({
 }: PresetBarProps) {
   const [showDropdown, setShowDropdown] = useState(false);
 
+  // Check if current selection is from the extra 7 benchmarks
+  const currentSuiteBenchmark = BENCHMARKS.find(
+    (b) => b.id === selectedPresetId && !CORE_SCENARIOS.some((cs) => cs.id === b.id)
+  );
+
   return (
     <div className="flex items-center space-x-1.5 p-1 rounded-full bg-[#0C0E14] border border-white/[0.08] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)]">
       {/* 3 Core Segmented Scenario Buttons */}
@@ -47,7 +52,7 @@ export default function PresetBar({
           <button
             key={sc.id}
             onClick={() => onSelectPreset(sc.id)}
-            className={`px-3 py-1.5 rounded-full text-xs font-mono transition-all duration-150 flex items-center space-x-1.5 ${
+            className={`px-3 py-1.5 rounded-full text-xs font-mono transition-all duration-150 flex items-center space-x-1.5 shrink-0 ${
               isSelected
                 ? sc.color === "crimson"
                   ? "bg-rose-950/80 text-rose-300 border border-rose-500/50 shadow-[0_0_12px_rgba(244,63,94,0.3)] font-semibold"
@@ -77,14 +82,21 @@ export default function PresetBar({
       <div className="relative">
         <button
           onClick={() => setShowDropdown(!showDropdown)}
-          className={`px-2.5 py-1.5 rounded-full text-xs font-mono transition-all flex items-center space-x-1 ${
-            showDropdown || (!CORE_SCENARIOS.some(s => selectedPresetId.includes(s.id.split("/").pop() || "___")) && selectedPresetId !== "custom-upload")
+          className={`px-3 py-1.5 rounded-full text-xs font-mono transition-all flex items-center space-x-1.5 shrink-0 ${
+            currentSuiteBenchmark
+              ? "bg-violet-950/80 text-violet-300 border border-violet-500/50 shadow-[0_0_12px_rgba(139,92,246,0.3)] font-semibold"
+              : showDropdown
               ? "bg-white/[0.08] text-white border border-white/[0.15]"
               : "text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]"
           }`}
           title="Browse all 10 IEC 61131-3 benchmark programs"
         >
-          <span>Suite (10)</span>
+          {currentSuiteBenchmark ? (
+            <span className="w-1.5 h-1.5 rounded-full bg-violet-400 shadow-[0_0_6px_#8b5cf6]" />
+          ) : null}
+          <span className="truncate max-w-[120px]">
+            {currentSuiteBenchmark ? currentSuiteBenchmark.name.split(":")[0] : "Suite (10)"}
+          </span>
           <svg className="w-3 h-3 text-slate-400" viewBox="0 0 12 12" fill="none">
             <path d="M2.5 4.5L6 8L9.5 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
@@ -118,7 +130,7 @@ export default function PresetBar({
                   }`}
                 >
                   <span className="truncate pr-2">{b.name}</span>
-                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 font-bold">
+                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 font-bold shrink-0">
                     FAIL #4
                   </span>
                 </button>
@@ -141,7 +153,7 @@ export default function PresetBar({
                   }`}
                 >
                   <span className="truncate pr-2">{b.name}</span>
-                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold">
+                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold shrink-0">
                     PASS 100%
                   </span>
                 </button>

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { ReplayFrame, VerificationResult } from "@/lib/plcVerifier";
 
 interface ScrubberPlayerProps {
@@ -22,37 +22,49 @@ export default function ScrubberPlayer({
   const maxFrames = Math.max(0, trace.length - 1);
   const currentFrame = trace[currentFrameIndex];
   const isHazard = Boolean(result && !result.safe);
+  const holdTicksRef = useRef<number>(0);
 
   // Auto-start playback on new result
   useEffect(() => {
     if (result && trace.length > 0) {
       setIsPlaying(true);
+      holdTicksRef.current = 0;
       onFrameChange(0);
     }
   }, [result]);
 
-  // Playback timer
+  // Playback timer with cinematic crash hold
   useEffect(() => {
     if (!isPlaying || maxFrames === 0) return;
 
-    const intervalMs = slowMo ? 700 : 220; // 0.25x slow-motion vs 1.0x
+    const intervalMs = slowMo ? 650 : 220; // 0.25x slow-motion vs 1.0x
     const timer = setInterval(() => {
       onFrameChange((prev) => {
         if (prev >= maxFrames) {
-          if (loopCrash) return 0;
+          if (loopCrash) {
+            // On a hazard breach, hold on the collision frame for 2 extra ticks (~1.3s)
+            // so the user can inspect the impact, spark burst, and alarm
+            if (isHazard && holdTicksRef.current < 2) {
+              holdTicksRef.current++;
+              return maxFrames;
+            }
+            holdTicksRef.current = 0;
+            return 0; // Loop back to start
+          }
           setIsPlaying(false);
           return maxFrames;
         }
+        holdTicksRef.current = 0;
         return prev + 1;
       });
     }, intervalMs);
 
     return () => clearInterval(timer);
-  }, [isPlaying, maxFrames, slowMo, loopCrash, onFrameChange]);
+  }, [isPlaying, maxFrames, slowMo, loopCrash, isHazard, onFrameChange]);
 
   if (!result || trace.length === 0) {
     return (
-      <div className="p-3 rounded-xl bg-[#0C0E14]/80 border border-white/[0.08] text-center text-xs font-mono text-slate-500">
+      <div className="p-3 rounded-2xl bg-[#0C0E14]/90 border border-white/[0.08] text-center text-xs font-mono text-slate-500">
         Replay scrubber standby. Select a scenario above to inspect temporal cycles.
       </div>
     );
@@ -64,13 +76,13 @@ export default function ScrubberPlayer({
   };
 
   return (
-    <div className="rounded-2xl bg-[#0C0E14]/90 backdrop-blur-md border border-white/[0.08] p-3 shadow-2xl space-y-2.5 font-mono text-xs">
+    <div className="rounded-2xl bg-[#0C0E14]/95 backdrop-blur-md border border-white/[0.08] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)] p-3 space-y-2.5 font-mono text-xs">
       {/* Top Scrubber Track */}
       <div className="flex items-center space-x-3">
         {/* Play/Pause Button */}
         <button
           onClick={() => setIsPlaying(!isPlaying)}
-          className={`w-8 h-8 rounded-full flex items-center justify-center transition-all shadow-md active:scale-95 ${
+          className={`w-8 h-8 rounded-full flex items-center justify-center transition-all shadow-md active:scale-95 shrink-0 ${
             isPlaying
               ? "bg-white text-slate-950 hover:bg-slate-200"
               : isHazard
@@ -98,7 +110,7 @@ export default function ScrubberPlayer({
             onFrameChange(Math.max(0, currentFrameIndex - 1));
           }}
           disabled={currentFrameIndex === 0}
-          className="text-slate-400 hover:text-white disabled:opacity-30 p-1 transition"
+          className="text-slate-400 hover:text-white disabled:opacity-30 p-1 transition shrink-0"
           title="Step back 1 cycle"
         >
           <svg className="w-4 h-4 fill-current" viewBox="0 0 16 16">
@@ -113,7 +125,7 @@ export default function ScrubberPlayer({
             onFrameChange(Math.min(maxFrames, currentFrameIndex + 1));
           }}
           disabled={currentFrameIndex >= maxFrames}
-          className="text-slate-400 hover:text-white disabled:opacity-30 p-1 transition"
+          className="text-slate-400 hover:text-white disabled:opacity-30 p-1 transition shrink-0"
           title="Step forward 1 cycle"
         >
           <svg className="w-4 h-4 fill-current" viewBox="0 0 16 16">
@@ -134,20 +146,22 @@ export default function ScrubberPlayer({
                   setIsPlaying(false);
                   onFrameChange(idx);
                 }}
-                className="flex-1 group py-2 focus:outline-none"
+                className="flex-1 group py-2 focus:outline-none flex flex-col items-center"
                 title={`Cycle #${frame.cycle} (${frame.timestamp_ms}ms)`}
               >
                 <div
-                  className={`h-1.5 rounded-full transition-all ${
+                  className={`w-full rounded-full transition-all ${
                     isBreach
-                      ? "bg-rose-500 shadow-[0_0_10px_#ef4444]"
+                      ? isCurrent
+                        ? "h-2 bg-rose-500 shadow-[0_0_12px_#ef4444] ring-2 ring-rose-400"
+                        : "h-1.5 bg-rose-500/80 shadow-[0_0_8px_#ef4444]"
                       : isCurrent
                       ? result.safe
-                        ? "bg-emerald-400 shadow-[0_0_8px_#10b981]"
-                        : "bg-amber-400 shadow-[0_0_8px_#f59e0b]"
+                        ? "h-2 bg-emerald-400 shadow-[0_0_10px_#10b981] ring-2 ring-emerald-300"
+                        : "h-2 bg-amber-400 shadow-[0_0_10px_#f59e0b] ring-2 ring-amber-300"
                       : idx < currentFrameIndex
-                      ? "bg-white/30"
-                      : "bg-white/10 group-hover:bg-white/20"
+                      ? "h-1.5 bg-white/30"
+                      : "h-1.5 bg-white/10 group-hover:bg-white/20"
                   }`}
                 />
               </button>
@@ -156,13 +170,13 @@ export default function ScrubberPlayer({
         </div>
 
         {/* Current Time Readout */}
-        <div className="text-[11px] tabular-nums text-slate-300 font-semibold whitespace-nowrap min-w-[100px] text-right">
+        <div className="text-[11px] tabular-nums text-slate-300 font-semibold whitespace-nowrap min-w-[95px] text-right shrink-0">
           C{String(currentFrame?.cycle ?? 0).padStart(2, "0")} · {currentFrame?.timestamp_ms ?? 0}ms
         </div>
       </div>
 
       {/* Bottom Sub-Bar: Speed, Loop & Breakpoint Jump */}
-      <div className="flex items-center justify-between pt-1 border-t border-white/[0.05] text-[11px]">
+      <div className="flex flex-wrap items-center justify-between pt-1 border-t border-white/[0.05] text-[11px] gap-2">
         <div className="flex items-center space-x-2">
           <span className={`w-1.5 h-1.5 rounded-full ${isHazard ? "bg-rose-500" : "bg-emerald-400"}`} />
           <span className="text-slate-400">
@@ -199,7 +213,7 @@ export default function ScrubberPlayer({
             }`}
             title="Toggle playback speed"
           >
-            {slowMo ? "0.25x Slow-Mo" : "1.0x Speed"}
+            {slowMo ? "0.25x Slow-Mo" : "1.0x Realtime"}
           </button>
 
           {/* Jump to Breakpoint */}

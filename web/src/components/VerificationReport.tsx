@@ -13,6 +13,7 @@ interface VerificationReportProps {
     deltaText: string;
     beforeCycle: number | null;
   } | null;
+  onRevertToOriginal?: () => void;
 }
 
 export default function VerificationReport({
@@ -21,6 +22,7 @@ export default function VerificationReport({
   onSynthesizePatch,
   canPatch,
   deltaInfo,
+  onRevertToOriginal,
 }: VerificationReportProps) {
   const [downloadSuccess, setDownloadSuccess] = useState(false);
 
@@ -49,24 +51,65 @@ export default function VerificationReport({
   const cA = result.collision_coils[0] || "%QX0.0";
   const cB = result.collision_coils[1] || "%QX0.1";
 
+  // Context-aware EARS descriptions (symmetric coil matching)
+  const getEarsContext = () => {
+    const has00 = cA.includes("0.0") || cB.includes("0.0");
+    const has01 = cA.includes("0.1") || cB.includes("0.1");
+    const has03 = cA.includes("0.3") || cB.includes("0.3");
+    const has04 = cA.includes("0.4") || cB.includes("0.4");
+
+    if (has00 && has01) {
+      return {
+        primaryDesc: "%QX0.1 (Robotic Transfer Arm)",
+        secondaryDesc: "inhibit %QX0.0 (Hydraulic Press Ram)",
+        zone: "inside die tooling zone",
+        condition: "Arm is safely Home (%IX0.2)",
+      };
+    }
+    if (has00 && has04) {
+      return {
+        primaryDesc: "%QX0.4 (Relief Valve / Motor Reverse)",
+        secondaryDesc: "inhibit %QX0.0 (Hydraulic Press / Motor Fwd)",
+        zone: "dual-contactor power bridge",
+        condition: "phase-inversion timer T4:5.DN completes",
+      };
+    }
+    if (has01 && has03) {
+      return {
+        primaryDesc: "%QX0.3 (Diverter Gate Clamp)",
+        secondaryDesc: "inhibit %QX0.1 (Feed Conveyor Arm)",
+        zone: "cross-transfer junction",
+        condition: "clamp position sensor verifies open",
+      };
+    }
+    return {
+      primaryDesc: `${cB} (Primary Actuator)`,
+      secondaryDesc: `inhibit ${cA} (Secondary Actuator)`,
+      zone: "shared physical envelope",
+      condition: "reciprocal safety interlock verifies clear",
+    };
+  };
+
+  const earsCtx = getEarsContext();
+
   return (
-    <div className="rounded-2xl bg-[#0C0E14] border border-white/[0.08] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)] p-4 space-y-3.5 font-mono text-xs">
+    <div className="rounded-2xl bg-[#0C0E14] border border-white/[0.08] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)] p-3.5 space-y-3 font-mono text-xs overflow-y-auto">
       {/* Executive Status Banner */}
       <div
-        className={`p-3.5 rounded-xl border transition-all duration-300 ${
+        className={`p-3 rounded-xl border transition-all duration-300 ${
           isSafe
             ? "border-emerald-500/50 bg-emerald-950/20 text-emerald-100 shadow-[0_0_20px_rgba(16,185,129,0.12)]"
             : "border-rose-500/60 bg-rose-950/25 text-rose-100 shadow-[0_0_20px_rgba(239,68,68,0.15)]"
         }`}
       >
-        <div className="flex items-center justify-between mb-1.5">
+        <div className="flex items-center justify-between mb-1">
           <div className="flex items-center space-x-2">
             <span
               className={`w-2.5 h-2.5 rounded-full ${
                 isSafe ? "bg-emerald-400 shadow-[0_0_8px_#10b981]" : "bg-rose-500 animate-ping shadow-[0_0_8px_#ef4444]"
               }`}
             />
-            <span className="font-bold tracking-wider text-[13px] uppercase">
+            <span className="font-bold tracking-wider text-[12px] uppercase">
               {isSafe ? "100% Invariant Safe · 0 Reachable Hazards" : `Critical Collision at Cycle #${result.collision_cycle}`}
             </span>
           </div>
@@ -86,13 +129,13 @@ export default function VerificationReport({
       <div className="grid grid-cols-3 gap-2 tabular-nums">
         <div className="p-2.5 rounded-xl bg-[#090C12] border border-white/[0.06] flex flex-col justify-between">
           <span className="text-[10px] text-slate-400 uppercase tracking-wider">States Explored</span>
-          <span className="text-base font-bold text-white mt-1">{result.states_explored}</span>
+          <span className="text-base font-bold text-white mt-0.5">{result.states_explored}</span>
           <span className="text-[9px] text-slate-500">Exhaustive BFS</span>
         </div>
 
         <div className="p-2.5 rounded-xl bg-[#090C12] border border-white/[0.06] flex flex-col justify-between">
           <span className="text-[10px] text-slate-400 uppercase tracking-wider">Failure Cycle</span>
-          <span className={`text-base font-bold mt-1 ${isSafe ? "text-emerald-400" : "text-rose-400"}`}>
+          <span className={`text-base font-bold mt-0.5 ${isSafe ? "text-emerald-400" : "text-rose-400"}`}>
             {result.collision_cycle !== null ? `#${String(result.collision_cycle).padStart(2, "0")}` : "None (Safe)"}
           </span>
           <span className="text-[9px] text-slate-500">{isSafe ? "0 Reachable" : "Crash Frame"}</span>
@@ -100,7 +143,7 @@ export default function VerificationReport({
 
         <div className="p-2.5 rounded-xl bg-[#090C12] border border-white/[0.06] flex flex-col justify-between">
           <span className="text-[10px] text-slate-400 uppercase tracking-wider">Colliding Coils</span>
-          <span className="text-sm font-bold text-amber-300 mt-1 truncate">
+          <span className="text-xs font-bold text-amber-300 mt-1 truncate">
             {result.collision_coils.length > 0 ? result.collision_coils.join(" + ") : "0 Conflicts"}
           </span>
           <span className="text-[9px] text-slate-500">Universal Field Bus</span>
@@ -108,7 +151,7 @@ export default function VerificationReport({
       </div>
 
       {/* Rolls-Royce EARS Specification Invariant Block (Stripe API Style) */}
-      <div className="rounded-xl bg-[#080B10] border border-white/[0.08] p-3 space-y-1.5">
+      <div className="rounded-xl bg-[#080B10] border border-white/[0.08] p-2.5 space-y-1">
         <div className="flex items-center justify-between text-[10px] text-slate-400">
           <span className="font-semibold text-slate-300 uppercase tracking-wider">
             Rolls-Royce EARS Invariant Rule
@@ -116,27 +159,27 @@ export default function VerificationReport({
           <span className="text-amber-400/90 font-medium">[Mavin et al., Rolls-Royce 2009]</span>
         </div>
 
-        <div className="text-[11px] leading-relaxed bg-[#05070B] p-2.5 rounded-lg border border-white/[0.04] text-slate-300 space-y-1">
+        <div className="text-[11px] leading-relaxed bg-[#05070B] p-2 rounded-lg border border-white/[0.04] text-slate-300 space-y-0.5">
           <div>
             <span className="text-violet-400 font-bold">WHILE </span>
-            <span className="text-amber-300 font-semibold">{cB} (Primary Actuator)</span>
-            <span className="text-slate-400"> is active or inside die center,</span>
+            <span className="text-amber-300 font-semibold">{earsCtx.primaryDesc}</span>
+            <span className="text-slate-400"> is active {earsCtx.zone},</span>
           </div>
           <div>
             <span className="text-emerald-400 font-bold">THE SYSTEM SHALL </span>
-            <span className="text-rose-300 font-semibold">inhibit {cA} (Secondary Stroke)</span>
+            <span className="text-rose-300 font-semibold">{earsCtx.secondaryDesc}</span>
             <span className="text-slate-400"> from energizing,</span>
           </div>
           <div>
             <span className="text-cyan-400 font-bold">WHERE </span>
-            <span className="text-slate-400">normal execution resumes only when Arm is safely Home (%IX0.2).</span>
+            <span className="text-slate-400">normal execution resumes only when {earsCtx.condition}.</span>
           </div>
         </div>
       </div>
 
       {/* Before / After Proof Delta (Shown after patch is synthesized) */}
       {deltaInfo && isSafe && (
-        <div className="p-3 bg-gradient-to-r from-emerald-950/30 to-violet-950/30 border border-emerald-500/40 rounded-xl space-y-1.5 shadow-[0_0_15px_rgba(16,185,129,0.15)]">
+        <div className="p-2.5 bg-gradient-to-r from-emerald-950/30 to-violet-950/30 border border-emerald-500/40 rounded-xl space-y-1 shadow-[0_0_15px_rgba(16,185,129,0.15)]">
           <div className="flex items-center justify-between text-[11px] font-bold text-emerald-300">
             <span>⚡ Formal Proof Delta (Before → After)</span>
             <span className="text-[9px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/40 font-bold">
@@ -152,7 +195,7 @@ export default function VerificationReport({
               <span className="text-emerald-400 font-bold">After:</span>
               <span>0 Hazards Reachable across {result.states_explored} states</span>
             </div>
-            <div className="text-[10px] text-violet-300 font-medium pt-0.5">
+            <div className="text-[10px] text-violet-300 font-medium">
               {deltaInfo.deltaText}
             </div>
           </div>
@@ -160,7 +203,7 @@ export default function VerificationReport({
       )}
 
       {/* Primary Action Button: Synthesize EARS Interlock or Download XML */}
-      <div className="pt-1 space-y-2">
+      <div className="pt-0.5 space-y-2">
         {canPatch && (
           <button
             onClick={onSynthesizePatch}
@@ -171,12 +214,24 @@ export default function VerificationReport({
         )}
 
         {isSafe && (
-          <button
-            onClick={handleDownloadXml}
-            className="w-full py-2.5 px-4 rounded-xl bg-[#131722] hover:bg-[#1a2030] text-emerald-300 hover:text-emerald-200 font-bold text-xs border border-emerald-500/40 shadow-lg transition-all active:scale-[0.99] flex items-center justify-center space-x-2"
-          >
-            <span>{downloadSuccess ? "✓ Patched XML Downloaded!" : "📥 Download Patched PLCopen XML (.xml)"}</span>
-          </button>
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={handleDownloadXml}
+              className="flex-1 py-2.5 px-3 rounded-xl bg-[#131722] hover:bg-[#1a2030] text-emerald-300 hover:text-emerald-200 font-bold text-xs border border-emerald-500/40 shadow-lg transition-all active:scale-[0.99] flex items-center justify-center space-x-1.5"
+            >
+              <span>{downloadSuccess ? "✓ Downloaded!" : "📥 Download Patched XML"}</span>
+            </button>
+
+            {deltaInfo && onRevertToOriginal && (
+              <button
+                onClick={onRevertToOriginal}
+                className="py-2.5 px-3 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] text-slate-300 hover:text-white font-semibold text-xs border border-white/[0.08] transition-all active:scale-[0.99] shrink-0"
+                title="Revert back to unpatched buggy logic to replay crash"
+              >
+                <span>↺ Revert to Defect</span>
+              </button>
+            )}
+          </div>
         )}
       </div>
     </div>
