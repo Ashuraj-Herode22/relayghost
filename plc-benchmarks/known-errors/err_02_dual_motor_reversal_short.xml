@@ -1,2 +1,24 @@
 <?xml version='1.0' encoding='utf-8'?>
-<project xmlns="http://www.plcopen.org/xml/tc6_0201"><types><pous><pou name="Dual_Motor_Reversal_Conflict" pouType="program"><body><LD><leftPowerRail localId="1" /><contact localId="2" negated="false"><variable>%IX0.4</variable><connectionPointIn><connection refLocalId="1" /></connectionPointIn></contact><contact localId="3" negated="false"><variable>%IX0.5</variable><connectionPointIn><connection refLocalId="2" /></connectionPointIn></contact><coil localId="4" storage="set"><variable>%QX0.0</variable><connectionPointIn><connection refLocalId="3" /></connectionPointIn></coil><contact localId="5" negated="false"><variable>%QX0.0</variable><connectionPointIn><connection refLocalId="1" /></connectionPointIn></contact><block localId="6" typeName="TON" instanceName="T4:5"><inputVariables><variable formalParameter="IN"><connectionPointIn><connection refLocalId="5" /></connectionPointIn></variable><variable formalParameter="PT"><expression>T#300ms</expression></variable></inputVariables></block><contact localId="7" negated="false"><variable>T4:5.DN</variable><connectionPointIn><connection refLocalId="5" /></connectionPointIn></contact><coil localId="8"><variable>%QX0.4</variable><connectionPointIn><connection refLocalId="7" /></connectionPointIn></coil></LD></body></pou></pous></types></project>
+<project xmlns="http://www.plcopen.org/xml/tc6_0201">
+  <types><pous><pou name="Motor_Bridge_Dual_Contactor" pouType="program"><body><LD>
+    <leftPowerRail localId="1"/>
+    <!-- Rung 1: Forward Pushbutton + Overload Relay OK -> Forward Contactor K1 Set -->
+    <contact localId="2" negated="false"><variable>%IX0.4</variable><connectionPointIn><connection refLocalId="1"/></connectionPointIn></contact>
+    <contact localId="3" negated="false"><variable>%IX0.0</variable><connectionPointIn><connection refLocalId="2"/></connectionPointIn></contact>
+    <coil localId="4" storage="set"><variable>%QX0.0</variable><connectionPointIn><connection refLocalId="3"/></connectionPointIn></coil>
+    <!-- Rung 2: Forward Active -> Reverse Command Delay Timer T4:5 -->
+    <contact localId="5" negated="false"><variable>%QX0.0</variable><connectionPointIn><connection refLocalId="1"/></connectionPointIn></contact>
+    <block localId="6" typeName="TON" instanceName="T4:5"><inputVariables><variable formalParameter="IN"><connectionPointIn><connection refLocalId="5"/></connectionPointIn></variable><variable formalParameter="PT"><expression>T#300ms</expression></variable></inputVariables></block>
+    <!-- Rung 3: Reverse PB + Neutral Prox -> Reset Forward Contactor K1 -->
+    <contact localId="7" negated="false"><variable>T4:5.DN</variable><connectionPointIn><connection refLocalId="1"/></connectionPointIn></contact>
+    <contact localId="8" negated="false"><variable>%IX0.2</variable><connectionPointIn><connection refLocalId="7"/></connectionPointIn></contact>
+    <coil localId="9" storage="reset"><variable>%QX0.0</variable><connectionPointIn><connection refLocalId="8"/></connectionPointIn></coil>
+    <!-- Rung 4: Reverse Command Timer Done -> Reverse Contactor K2 (Missing Electrical Interlock with K1!) -->
+    <contact localId="10" negated="false"><variable>T4:5.DN</variable><connectionPointIn><connection refLocalId="1"/></connectionPointIn></contact>
+    <contact localId="11" negated="false"><variable>%IX0.5</variable><connectionPointIn><connection refLocalId="10"/></connectionPointIn></contact>
+    <coil localId="12"><variable>%QX0.4</variable><connectionPointIn><connection refLocalId="11"/></connectionPointIn></coil>
+    <!-- Rung 5: Drive Motor Active -> Forced-Air Cooling Fan -->
+    <contact localId="13" negated="false"><variable>%IX0.4</variable><connectionPointIn><connection refLocalId="1"/></connectionPointIn></contact>
+    <coil localId="14"><variable>%QX0.2</variable><connectionPointIn><connection refLocalId="13"/></connectionPointIn></coil>
+  </LD></body></pou></pous></types>
+</project>

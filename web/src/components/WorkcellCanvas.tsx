@@ -19,6 +19,8 @@ interface WorkcellCanvasProps {
   isSafe?: boolean;
   collisionDescription?: string | null;
   sourceName?: string;
+  machineType?: MachineArchetype;
+  onMachineTypeChange?: (machine: MachineArchetype) => void;
 }
 
 /**
@@ -192,13 +194,15 @@ export default function WorkcellCanvas({
   isSafe,
   collisionDescription,
   sourceName = "",
+  machineType,
+  onMachineTypeChange,
 }: WorkcellCanvasProps) {
   const mountRef = useRef<HTMLDivElement>(null);
 
-  // Auto-detect machine from loaded PLC program metadata
+  // Auto-detect machine from loaded PLC program metadata or explicit machineType prop
   const detectedMachine = useMemo(
-    () => classifyMachineArchetype(sourceName, collisionDescription || ""),
-    [sourceName, collisionDescription]
+    () => machineType || classifyMachineArchetype(sourceName, collisionDescription || ""),
+    [machineType, sourceName, collisionDescription]
   );
 
   const [activeMachineType, setActiveMachineType] = useState<MachineArchetype>(detectedMachine);
@@ -206,7 +210,7 @@ export default function WorkcellCanvas({
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [showMachineMenu, setShowMachineMenu] = useState<boolean>(false);
 
-  // Keep active machine in sync if user selects a different scenario
+  // Keep active machine in sync if user selects a different scenario or prop changes
   useEffect(() => {
     setActiveMachineType(detectedMachine);
   }, [detectedMachine]);
@@ -553,6 +557,7 @@ export default function WorkcellCanvas({
                       key={m.id}
                       onClick={() => {
                         setActiveMachineType(m.id);
+                        if (onMachineTypeChange) onMachineTypeChange(m.id);
                         setShowMachineMenu(false);
                       }}
                       className={`w-full text-left px-2.5 py-2 rounded-lg flex items-center space-x-2.5 transition ${

@@ -119,19 +119,66 @@ export const MACHINE_DEFINITIONS: Record<MachineArchetype, MachineMeta> = {
 export function classifyMachineArchetype(identifier: string, xmlContent?: string): MachineArchetype {
   const text = (identifier + " " + (xmlContent || "")).toLowerCase();
 
-  if (text.includes("bottle") || text.includes("filler") || text.includes("beverage") || text.includes("rotary_latch")) {
+  if (
+    text.includes("bottle") ||
+    text.includes("filler") ||
+    text.includes("beverage") ||
+    text.includes("starwheel") ||
+    text.includes("bottling") ||
+    text.includes("mystery_gamma") ||
+    text.includes("rotary_latch")
+  ) {
     return "bottle_filler";
   }
-  if (text.includes("oven") || text.includes("purge") || text.includes("thermal") || text.includes("autoclave") || text.includes("furnace")) {
+  if (
+    text.includes("oven") ||
+    text.includes("purge") ||
+    text.includes("thermal") ||
+    text.includes("autoclave") ||
+    text.includes("furnace") ||
+    text.includes("nichrome") ||
+    text.includes("curing") ||
+    text.includes("err_03")
+  ) {
     return "curing_oven";
   }
-  if (text.includes("motor") || text.includes("reversal") || text.includes("contactor") || text.includes("vfd") || text.includes("short_circuit") || text.includes("err_02")) {
+  if (
+    text.includes("motor") ||
+    text.includes("reversal") ||
+    text.includes("contactor") ||
+    text.includes("vfd") ||
+    text.includes("short_circuit") ||
+    text.includes("bridge") ||
+    text.includes("err_02") ||
+    text.includes("480v") ||
+    text.includes("busbar") ||
+    text.includes("sequential_motor") ||
+    text.includes("cascade")
+  ) {
     return "motor_bridge";
   }
-  if (text.includes("robot") || text.includes("handover") || text.includes("dual_arm") || text.includes("alpha")) {
+  if (
+    text.includes("robot") ||
+    text.includes("handover") ||
+    text.includes("dual_arm") ||
+    text.includes("alpha") ||
+    text.includes("beta") ||
+    text.includes("mystery_alpha")
+  ) {
     return "robot_handover";
   }
-  if (text.includes("diverter") || text.includes("conveyor") || text.includes("gate") || text.includes("traffic") || text.includes("sort")) {
+  if (
+    text.includes("diverter") ||
+    text.includes("conveyor") ||
+    text.includes("gate") ||
+    text.includes("traffic") ||
+    text.includes("sort") ||
+    text.includes("err_01") ||
+    text.includes("railway") ||
+    text.includes("beremiz") ||
+    text.includes("roller") ||
+    text.includes("pusher")
+  ) {
     return "conveyor_diverter";
   }
 

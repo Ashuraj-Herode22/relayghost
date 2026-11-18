@@ -15,7 +15,7 @@ import {
   Rung,
   VerificationResult,
 } from "@/lib/plcVerifier";
-import { classifyMachineArchetype } from "@/components/workcell/types";
+import { MachineArchetype, classifyMachineArchetype } from "@/components/workcell/types";
 
 // Client-only dynamic import for Three.js 3D Viewport to prevent SSR canvas hydration mismatch
 const WorkcellCanvas = dynamic(() => import("@/components/WorkcellCanvas"), {
@@ -65,6 +65,7 @@ export default function Home() {
   } | null>(null);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState<boolean>(false);
   const [isDragging, setIsDragging] = useState<boolean>(false);
+  const [userMachineOverride, setUserMachineOverride] = useState<MachineArchetype | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -93,6 +94,7 @@ export default function Home() {
   };
 
   const handleSelectPreset = (presetId: string) => {
+    setUserMachineOverride(null);
     setSelectedPresetId(presetId);
     const found = BENCHMARKS.find((b) => b.id === presetId);
     if (found) {
@@ -101,6 +103,7 @@ export default function Home() {
   };
 
   const handleUploadXml = (xmlContent: string, fileName: string) => {
+    setUserMachineOverride(null);
     setSelectedPresetId("custom-upload");
     loadAndVerify(xmlContent, fileName);
     setIsUploadModalOpen(false);
@@ -174,7 +177,11 @@ export default function Home() {
       verificationResult.collision_cycle !== null
   );
 
-  const machineType = classifyMachineArchetype(sourceName, verificationResult?.hazard || "");
+  const detectedMachine = classifyMachineArchetype(
+    sourceName,
+    `${originalXml} ${verificationResult?.hazard || ""}`
+  );
+  const machineType = userMachineOverride || detectedMachine;
 
   if (!hasMounted) {
     return (
@@ -326,6 +333,8 @@ export default function Home() {
                 isSafe={Boolean(verificationResult?.safe)}
                 collisionDescription={verificationResult?.hazard || undefined}
                 sourceName={sourceName}
+                machineType={machineType}
+                onMachineTypeChange={setUserMachineOverride}
               />
             </div>
 
@@ -346,6 +355,7 @@ export default function Home() {
                 currentFrame={currentFrame}
                 faultRungIds={verificationResult?.fault_rung_ids || []}
                 isCrashFrame={isCrashFrame}
+                machineType={machineType}
               />
             </div>
 
