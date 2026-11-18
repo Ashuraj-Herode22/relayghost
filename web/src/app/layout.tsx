@@ -62,14 +62,26 @@ export default function RootLayout({
                   }
                 }, true);
 
-                window.addEventListener("unhandledrejection", function(e) {
+                window.onerror = function(msg, url, line, col, error) {
+                  var str = String(msg) + " " + String(url) + " " + (error ? error.stack : "");
+                  if (
+                    (url && url.indexOf("chrome-extension://") !== -1) ||
+                    str.indexOf("chrome-extension://") !== -1 ||
+                    str.indexOf("M_ID") !== -1 ||
+                    str.indexOf("bis_skin_checked") !== -1
+                  ) {
+                    return true; // suppresses browser error reporting
+                  }
+                };
+
+                window.onunhandledrejection = function(e) {
                   var reason = e.reason || {};
                   var stack = reason.stack || String(reason);
                   if (stack.indexOf("chrome-extension://") !== -1 || stack.indexOf("M_ID") !== -1) {
-                    e.stopImmediatePropagation();
                     e.preventDefault();
+                    return true;
                   }
-                }, true);
+                };
               }
             `,
           }}
