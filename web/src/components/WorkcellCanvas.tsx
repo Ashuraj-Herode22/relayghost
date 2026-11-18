@@ -1,20 +1,29 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useMemo } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { ReplayFrame } from "@/lib/plcVerifier";
+import { MachineArchetype, MACHINE_DEFINITIONS, classifyMachineArchetype } from "./workcell/types";
+import { IndustrialParticleEngine } from "./workcell/ParticleSystem";
+import { MachineInstance, buildStampingPress } from "./workcell/machines/stampingPress";
+import { buildBottleFiller } from "./workcell/machines/bottleFiller";
+import { buildConveyorDiverter } from "./workcell/machines/conveyorDiverter";
+import { buildCuringOven } from "./workcell/machines/curingOven";
+import { buildMotorBridge } from "./workcell/machines/motorBridge";
+import { buildRobotHandover } from "./workcell/machines/robotHandover";
 
 interface WorkcellCanvasProps {
   currentFrame?: ReplayFrame;
   isCollision?: boolean;
   isSafe?: boolean;
   collisionDescription?: string | null;
+  sourceName?: string;
 }
 
 /**
- * Zero-dependency WebAudio Industrial Synthesizer
- * Lazily initialized to honor browser autoplay policies without console warnings.
+ * High-Fidelity WebAudio Industrial Synthesizer
+ * Procedurally generates authentic audio for each machine type.
  */
 class IndustrialAudioSynthesizer {
   private ctx: AudioContext | null = null;
@@ -49,7 +58,7 @@ class IndustrialAudioSynthesizer {
     return this.ctx && this.ctx.state === "running" ? this.ctx : null;
   }
 
-  public playServoHum() {
+  public playServoHum(freq = 120) {
     const ctx = this.getContext();
     if (!ctx) return;
     try {
@@ -59,61 +68,98 @@ class IndustrialAudioSynthesizer {
       const gain = ctx.createGain();
 
       osc.type = "triangle";
-      osc.frequency.setValueAtTime(110, now);
-      osc.frequency.exponentialRampToValueAtTime(155, now + 0.15);
+      osc.frequency.setValueAtTime(freq, now);
+      osc.frequency.exponentialRampToValueAtTime(freq * 1.35, now + 0.12);
 
       filter.type = "lowpass";
-      filter.frequency.setValueAtTime(420, now);
+      filter.frequency.setValueAtTime(450, now);
 
       gain.gain.setValueAtTime(0.001, now);
-      gain.gain.linearRampToValueAtTime(0.05, now + 0.04);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+      gain.gain.linearRampToValueAtTime(0.04, now + 0.03);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
 
       osc.connect(filter);
       filter.connect(gain);
       gain.connect(ctx.destination);
 
       osc.start(now);
-      osc.stop(now + 0.24);
+      osc.stop(now + 0.2);
     } catch {}
   }
 
-  public playCollisionSound() {
+  public playCollisionSound(machineType: MachineArchetype) {
     const ctx = this.getContext();
     if (!ctx) return;
     try {
       const now = ctx.currentTime;
 
-      // Heavy metallic thud
-      const thudOsc = ctx.createOscillator();
-      const thudGain = ctx.createGain();
-      thudOsc.type = "sine";
-      thudOsc.frequency.setValueAtTime(240, now);
-      thudOsc.frequency.exponentialRampToValueAtTime(35, now + 0.35);
+      if (machineType === "bottle_filler") {
+        // High-frequency glass bottle shattering
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(2400, now);
+        osc.frequency.exponentialRampToValueAtTime(650, now + 0.25);
+        gain.gain.setValueAtTime(0.3, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.35);
+      } else if (machineType === "motor_bridge") {
+        // 480V Arc Flash Electrical Zap
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sawtooth";
+        osc.frequency.setValueAtTime(120, now);
+        osc.frequency.setValueAtTime(480, now + 0.08);
+        osc.frequency.setValueAtTime(60, now + 0.18);
+        gain.gain.setValueAtTime(0.4, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.45);
+      } else if (machineType === "curing_oven") {
+        // Volumetric thermal flash combustion whoosh
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(180, now);
+        osc.frequency.exponentialRampToValueAtTime(35, now + 0.5);
+        gain.gain.setValueAtTime(0.4, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.55);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.6);
+      } else {
+        // Heavy Stamping Press / Robot Crash: Massive metallic thud + klaxon
+        const thudOsc = ctx.createOscillator();
+        const thudGain = ctx.createGain();
+        thudOsc.type = "sine";
+        thudOsc.frequency.setValueAtTime(220, now);
+        thudOsc.frequency.exponentialRampToValueAtTime(32, now + 0.35);
+        thudGain.gain.setValueAtTime(0.4, now);
+        thudGain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+        thudOsc.connect(thudGain);
+        thudGain.connect(ctx.destination);
+        thudOsc.start(now);
+        thudOsc.stop(now + 0.42);
 
-      thudGain.gain.setValueAtTime(0.35, now);
-      thudGain.gain.exponentialRampToValueAtTime(0.001, now + 0.38);
-
-      thudOsc.connect(thudGain);
-      thudGain.connect(ctx.destination);
-      thudOsc.start(now);
-      thudOsc.stop(now + 0.4);
-
-      // Industrial Klaxon Alarm
-      const buzzOsc = ctx.createOscillator();
-      const buzzGain = ctx.createGain();
-      buzzOsc.type = "sawtooth";
-      buzzOsc.frequency.setValueAtTime(720, now);
-      buzzOsc.frequency.setValueAtTime(560, now + 0.12);
-      buzzOsc.frequency.setValueAtTime(860, now + 0.24);
-
-      buzzGain.gain.setValueAtTime(0.18, now);
-      buzzGain.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
-
-      buzzOsc.connect(buzzGain);
-      buzzGain.connect(ctx.destination);
-      buzzOsc.start(now);
-      buzzOsc.stop(now + 0.48);
+        // Industrial Klaxon
+        const buzzOsc = ctx.createOscillator();
+        const buzzGain = ctx.createGain();
+        buzzOsc.type = "sawtooth";
+        buzzOsc.frequency.setValueAtTime(680, now);
+        buzzOsc.frequency.setValueAtTime(520, now + 0.14);
+        buzzGain.gain.setValueAtTime(0.2, now);
+        buzzGain.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
+        buzzOsc.connect(buzzGain);
+        buzzGain.connect(ctx.destination);
+        buzzOsc.start(now);
+        buzzOsc.stop(now + 0.48);
+      }
     } catch {}
   }
 
@@ -122,22 +168,19 @@ class IndustrialAudioSynthesizer {
     if (!ctx) return;
     try {
       const now = ctx.currentTime;
-      const notes = [523.25, 659.25, 783.99]; // C5, E5, G5 harmonic triad
+      const notes = [523.25, 659.25, 783.99]; // C5, E5, G5 triad
       notes.forEach((freq, i) => {
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
         osc.type = "sine";
-        osc.frequency.setValueAtTime(freq, now + i * 0.09);
-
-        gain.gain.setValueAtTime(0.001, now + i * 0.09);
-        gain.gain.linearRampToValueAtTime(0.08, now + i * 0.09 + 0.03);
-        gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.09 + 0.45);
-
+        osc.frequency.setValueAtTime(freq, now + i * 0.08);
+        gain.gain.setValueAtTime(0.001, now + i * 0.08);
+        gain.gain.linearRampToValueAtTime(0.07, now + i * 0.08 + 0.03);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.08 + 0.4);
         osc.connect(gain);
         gain.connect(ctx.destination);
-
-        osc.start(now + i * 0.09);
-        osc.stop(now + i * 0.09 + 0.5);
+        osc.start(now + i * 0.08);
+        osc.stop(now + i * 0.08 + 0.45);
       });
     } catch {}
   }
@@ -148,476 +191,311 @@ export default function WorkcellCanvas({
   isCollision,
   isSafe,
   collisionDescription,
+  sourceName = "",
 }: WorkcellCanvasProps) {
   const mountRef = useRef<HTMLDivElement>(null);
-  const [cameraView, setCameraView] = useState<"iso" | "die" | "top">("iso");
+
+  // Auto-detect machine from loaded PLC program metadata
+  const detectedMachine = useMemo(
+    () => classifyMachineArchetype(sourceName, collisionDescription || ""),
+    [sourceName, collisionDescription]
+  );
+
+  const [activeMachineType, setActiveMachineType] = useState<MachineArchetype>(detectedMachine);
+  const [cameraView, setCameraView] = useState<"iso" | "macro" | "top">("iso");
   const [isMuted, setIsMuted] = useState<boolean>(false);
+  const [showMachineMenu, setShowMachineMenu] = useState<boolean>(false);
+
+  // Keep active machine in sync if user selects a different scenario
+  useEffect(() => {
+    setActiveMachineType(detectedMachine);
+  }, [detectedMachine]);
 
   const audioRef = useRef<IndustrialAudioSynthesizer | null>(null);
   const prevCollisionRef = useRef<boolean>(false);
   const prevOutputsRef = useRef<Record<string, boolean>>({});
 
-  // Dynamic kinematic target state for smooth Three.MathUtils.lerp physics interpolation
-  const kinematicsTargetRef = useRef<{
-    pressY: number;
-    armX: number;
-    conveyorScale: number;
-    jaw1X: number;
-    jaw2X: number;
-    isPumpActive: boolean;
-    laserOpacity: number;
-    beaconIntensity: number;
-    cameraPos: THREE.Vector3;
-    cameraLook: THREE.Vector3;
-    isShaking: boolean;
-    isUserInteracting: boolean;
-  }>({
-    pressY: 3.1,
-    armX: 0.0,
-    conveyorScale: 1.0,
-    jaw1X: -0.72,
-    jaw2X: 0.72,
-    isPumpActive: false,
-    laserOpacity: 0.15,
-    beaconIntensity: 0,
-    cameraPos: new THREE.Vector3(0, 4.4, 9.6),
-    cameraLook: new THREE.Vector3(0, 0.8, 0),
-    isShaking: false,
-    isUserInteracting: false,
+  // Machine instance and particle engine references
+  const machineRef = useRef<MachineInstance | null>(null);
+  const particleEngineRef = useRef<IndustrialParticleEngine | null>(null);
+  const sceneRef = useRef<THREE.Scene | null>(null);
+  const controlsRef = useRef<OrbitControls | null>(null);
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+
+  // Smooth camera interpolation targets
+  const cameraTargetRef = useRef({
+    position: new THREE.Vector3(0, 4.4, 9.6),
+    lookAt: new THREE.Vector3(0, 0.8, 0),
+    isInteracting: false,
+    shakeIntensity: 0,
   });
 
-  const sceneRef = useRef<{
-    scene: THREE.Scene;
-    camera: THREE.PerspectiveCamera;
-    renderer: THREE.WebGLRenderer;
-    controls: OrbitControls;
-    pressRam: THREE.Mesh;
-    transferArm: THREE.Group;
-    conveyorBelt: THREE.Mesh;
-    clampJaws: { jaw1: THREE.Mesh; jaw2: THREE.Mesh };
-    pumpValve: THREE.Mesh;
-    laserCurtain: THREE.Mesh;
-    beaconLight: THREE.PointLight;
-    rimLight: THREE.DirectionalLight;
-    sparkParticles: THREE.Points;
-  } | null>(null);
+  const activeMachineMeta = MACHINE_DEFINITIONS[activeMachineType];
 
-  // Lazy browser autoplay unlock
+  // Initialize WebAudio
   useEffect(() => {
-    if (!audioRef.current) {
-      audioRef.current = new IndustrialAudioSynthesizer();
-    }
-
-    const unlockListener = () => {
-      audioRef.current?.unlock();
-      window.removeEventListener("pointerdown", unlockListener);
-      window.removeEventListener("keydown", unlockListener);
-    };
-
-    window.addEventListener("pointerdown", unlockListener, { once: true });
-    window.addEventListener("keydown", unlockListener, { once: true });
-
+    audioRef.current = new IndustrialAudioSynthesizer();
     return () => {
-      window.removeEventListener("pointerdown", unlockListener);
-      window.removeEventListener("keydown", unlockListener);
+      audioRef.current = null;
     };
   }, []);
 
   const toggleMute = () => {
     if (!audioRef.current) return;
-    const nextMuted = !isMuted;
-    setIsMuted(nextMuted);
-    audioRef.current.setMuted(nextMuted);
-    if (!nextMuted) {
-      audioRef.current.playSafeChime();
-    }
+    const next = !isMuted;
+    setIsMuted(next);
+    audioRef.current.setMuted(next);
   };
 
+  // Mount Three.js Viewport
   useEffect(() => {
     if (!mountRef.current) return;
-    mountRef.current.replaceChildren();
 
-    const width = mountRef.current.clientWidth || 600;
-    const height = mountRef.current.clientHeight || 440;
+    const width = mountRef.current.clientWidth;
+    const height = mountRef.current.clientHeight;
 
-    // 1. Scene, Camera, Renderer with Studio Exponential Fog
     const scene = new THREE.Scene();
+    sceneRef.current = scene;
     scene.background = new THREE.Color(0x06070a);
     scene.fog = new THREE.FogExp2(0x06070a, 0.038);
 
-    const camera = new THREE.PerspectiveCamera(44, width / height, 0.1, 100);
+    const camera = new THREE.PerspectiveCamera(40, width / height, 0.1, 100);
     camera.position.set(0, 4.4, 9.6);
-    camera.lookAt(0, 0.8, 0);
+    cameraRef.current = camera;
 
-    const renderer = new THREE.WebGLRenderer({
-      antialias: true,
-      alpha: true,
-      powerPreference: "high-performance",
-    });
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.15;
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.15;
     mountRef.current.appendChild(renderer.domElement);
 
-    // OrbitControls for smooth 3D inspection
+    // OrbitControls
     const controls = new OrbitControls(camera, renderer.domElement);
+    controlsRef.current = controls;
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
+    controls.maxPolarAngle = Math.PI / 2 + 0.02;
+    controls.minDistance = 2.2;
+    controls.maxDistance = 22;
     controls.target.set(0, 0.8, 0);
-    controls.maxPolarAngle = Math.PI / 2 + 0.02; // Do not dip under floor
-    controls.minDistance = 2.5;
-    controls.maxDistance = 24.0;
 
-    // Track user drag so auto-camera doesn't fight manual orbiting
     controls.addEventListener("start", () => {
-      kinematicsTargetRef.current.isUserInteracting = true;
+      cameraTargetRef.current.isInteracting = true;
     });
 
-    // 2. Studio 3-Point Lighting Setup
-    const ambientLight = new THREE.HemisphereLight(0x334155, 0x06070a, 1.4);
+    // Studio Lighting
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.65);
     scene.add(ambientLight);
 
-    const keyLight = new THREE.DirectionalLight(0xe2e8f0, 2.6);
-    keyLight.position.set(6, 11, 7);
+    const keyLight = new THREE.DirectionalLight(0xfff7ed, 2.2);
+    keyLight.position.set(6, 12, 8);
     keyLight.castShadow = true;
-    keyLight.shadow.mapSize.width = 1024;
-    keyLight.shadow.mapSize.height = 1024;
+    keyLight.shadow.mapSize.width = 2048;
+    keyLight.shadow.mapSize.height = 2048;
+    keyLight.shadow.camera.near = 0.5;
+    keyLight.shadow.camera.far = 30;
+    keyLight.shadow.bias = -0.0005;
     scene.add(keyLight);
 
-    // Warm Amber Rim Light for Crisp Spectral Silhouette
-    const rimLight = new THREE.DirectionalLight(0xf59e0b, 1.8);
-    rimLight.position.set(-6, 5, -5);
+    const rimLight = new THREE.DirectionalLight(0x38bdf8, 1.4);
+    rimLight.position.set(-8, 6, -6);
     scene.add(rimLight);
 
-    // Dynamic Breach Beacon Light
-    const beaconLight = new THREE.PointLight(0xff0044, 0, 16);
-    beaconLight.position.set(0, 4.2, 0);
-    scene.add(beaconLight);
+    const fillLight = new THREE.DirectionalLight(0x818cf8, 0.8);
+    fillLight.position.set(0, -2, -6);
+    scene.add(fillLight);
 
-    // 3. Precision Brushed Gunmetal PBR Materials
-    const gunmetalMat = new THREE.MeshStandardMaterial({
-      color: 0x222a38,
-      metalness: 0.85,
-      roughness: 0.25,
-    });
+    // Grid Floor
+    const gridHelper = new THREE.GridHelper(30, 30, 0x334155, 0x0f172a);
+    gridHelper.position.y = 0;
+    scene.add(gridHelper);
 
-    const darkSteelMat = new THREE.MeshStandardMaterial({
-      color: 0x161c26,
-      metalness: 0.9,
-      roughness: 0.35,
-    });
-
-    // 4. Industrial Floor with Subtle Precision Grid
-    const floorGeo = new THREE.PlaneGeometry(34, 34);
+    // Floor reflector plane
+    const floorGeo = new THREE.PlaneGeometry(50, 50);
     const floorMat = new THREE.MeshStandardMaterial({
-      color: 0x090c13,
-      roughness: 0.85,
-      metalness: 0.15,
+      color: 0x080b11,
+      roughness: 0.45,
+      metalness: 0.65,
     });
     const floor = new THREE.Mesh(floorGeo, floorMat);
     floor.rotation.x = -Math.PI / 2;
-    floor.position.y = -0.5;
+    floor.position.y = -0.01;
     floor.receiveShadow = true;
     scene.add(floor);
 
-    const grid = new THREE.GridHelper(34, 34, 0x1e2738, 0x0f141f);
-    grid.position.y = -0.49;
-    scene.add(grid);
+    // Particle Engine
+    const particleEngine = new IndustrialParticleEngine(scene);
+    particleEngineRef.current = particleEngine;
 
-    // 5. Heavy Hydraulic Stamping Press (%QX0.0)
-    const colGeo = new THREE.BoxGeometry(0.42, 4.6, 0.42);
-    const leftCol = new THREE.Mesh(colGeo, gunmetalMat);
-    leftCol.position.set(-1.85, 1.8, 0);
-    leftCol.castShadow = true;
-    scene.add(leftCol);
-
-    const rightCol = new THREE.Mesh(colGeo, gunmetalMat);
-    rightCol.position.set(1.85, 1.8, 0);
-    rightCol.castShadow = true;
-    scene.add(rightCol);
-
-    const crownGeo = new THREE.BoxGeometry(4.3, 0.85, 1.25);
-    const crown = new THREE.Mesh(crownGeo, darkSteelMat);
-    crown.position.set(0, 4.1, 0);
-    scene.add(crown);
-
-    const bolsterGeo = new THREE.BoxGeometry(3.7, 0.45, 1.25);
-    const bolster = new THREE.Mesh(bolsterGeo, darkSteelMat);
-    bolster.position.set(0, -0.28, 0);
-    bolster.receiveShadow = true;
-    scene.add(bolster);
-
-    // Hazard Striping on Bolster Die Bed Edge
-    const stripeGeo = new THREE.BoxGeometry(3.7, 0.06, 0.04);
-    const stripeMat = new THREE.MeshBasicMaterial({ color: 0xf59e0b });
-    const hazardStripe = new THREE.Mesh(stripeGeo, stripeMat);
-    hazardStripe.position.set(0, -0.05, 0.63);
-    scene.add(hazardStripe);
-
-    // Moving Press Ram Head (%QX0.0)
-    const ramGeo = new THREE.BoxGeometry(2.9, 0.72, 0.95);
-    const ramMat = new THREE.MeshStandardMaterial({
-      color: 0xf59e0b,
-      metalness: 0.65,
-      roughness: 0.28,
-      emissive: 0x000000,
-    });
-    const pressRam = new THREE.Mesh(ramGeo, ramMat);
-    pressRam.position.set(0, 3.1, 0);
-    pressRam.castShadow = true;
-    scene.add(pressRam);
-
-    // 6. Robotic Transfer Arm (%QX0.1)
-    const transferArm = new THREE.Group();
-    const armBaseGeo = new THREE.CylinderGeometry(0.38, 0.44, 0.65, 20);
-    const armBase = new THREE.Mesh(armBaseGeo, darkSteelMat);
-    armBase.position.set(-2.85, -0.18, 0);
-    transferArm.add(armBase);
-
-    const armBoomGeo = new THREE.BoxGeometry(2.5, 0.22, 0.22);
-    const armBoomMat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.6, roughness: 0.3 });
-    const armBoom = new THREE.Mesh(armBoomGeo, armBoomMat);
-    armBoom.position.set(-1.55, 0.52, 0);
-    armBoom.castShadow = true;
-    transferArm.add(armBoom);
-
-    const gripperGeo = new THREE.BoxGeometry(0.32, 0.42, 0.32);
-    const gripperMat = new THREE.MeshStandardMaterial({ color: 0xef4444, metalness: 0.5 });
-    const gripper = new THREE.Mesh(gripperGeo, gripperMat);
-    gripper.position.set(-0.3, 0.52, 0);
-    transferArm.add(gripper);
-
-    scene.add(transferArm);
-
-    // 7. Feed Conveyor Belt (%QX0.2)
-    const conveyorGeo = new THREE.BoxGeometry(1.25, 0.22, 4.2);
-    const conveyorMat = new THREE.MeshStandardMaterial({ color: 0x18202f, roughness: 0.9 });
-    const conveyorBelt = new THREE.Mesh(conveyorGeo, conveyorMat);
-    conveyorBelt.position.set(0, -0.12, 2.3);
-    conveyorBelt.receiveShadow = true;
-    scene.add(conveyorBelt);
-
-    // 8. Diverter Clamp (%QX0.3)
-    const jawMat = new THREE.MeshStandardMaterial({ color: 0x10b981, metalness: 0.7, roughness: 0.3 });
-    const jaw1 = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.32, 0.45), jawMat);
-    jaw1.position.set(-0.72, 0.12, 2.3);
-    const jaw2 = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.32, 0.45), jawMat);
-    jaw2.position.set(0.72, 0.12, 2.3);
-    scene.add(jaw1);
-    scene.add(jaw2);
-
-    // 9. Solenoid Relief Valve / Motor (%QX0.4)
-    const valveGeo = new THREE.CylinderGeometry(0.22, 0.22, 0.55, 16);
-    const valveMat = new THREE.MeshStandardMaterial({
-      color: 0x8b5cf6,
-      metalness: 0.85,
-      roughness: 0.25,
-      emissive: 0x000000,
-    });
-    const pumpValve = new THREE.Mesh(valveGeo, valveMat);
-    pumpValve.position.set(2.45, 0.12, 0);
-    scene.add(pumpValve);
-
-    // 10. Safety Light Curtain (%QX0.5 / %IX0.3)
-    const curtainGeo = new THREE.PlaneGeometry(3.7, 2.6);
-    const curtainMat = new THREE.MeshBasicMaterial({
-      color: 0xef4444,
-      transparent: true,
-      opacity: 0.15,
-      side: THREE.DoubleSide,
-    });
-    const laserCurtain = new THREE.Mesh(curtainGeo, curtainMat);
-    laserCurtain.position.set(0, 1.25, 0.72);
-    scene.add(laserCurtain);
-
-    // 11. Volumetric Collision Spark Particles
-    const sparkCount = 140;
-    const sparkGeo = new THREE.BufferGeometry();
-    const sparkPositions = new Float32Array(sparkCount * 3);
-    for (let i = 0; i < sparkCount * 3; i += 3) {
-      sparkPositions[i] = (Math.random() - 0.5) * 1.6;
-      sparkPositions[i + 1] = 0.5 + (Math.random() - 0.5) * 0.9;
-      sparkPositions[i + 2] = (Math.random() - 0.5) * 1.3;
-    }
-    sparkGeo.setAttribute("position", new THREE.BufferAttribute(sparkPositions, 3));
-    const sparkMat = new THREE.PointsMaterial({
-      color: 0xff3b30,
-      size: 0.14,
-      transparent: true,
-      opacity: 0.0,
-      blending: THREE.AdditiveBlending,
-    });
-    const sparkParticles = new THREE.Points(sparkGeo, sparkMat);
-    scene.add(sparkParticles);
-
-    sceneRef.current = {
-      scene,
-      camera,
-      renderer,
-      controls,
-      pressRam,
-      transferArm,
-      conveyorBelt,
-      clampJaws: { jaw1, jaw2 },
-      pumpValve,
-      laserCurtain,
-      beaconLight,
-      rimLight,
-      sparkParticles,
-    };
-
-    // Smooth Physics Animation Loop with THREE.MathUtils.lerp
-    let animId: number;
-    const animate = () => {
-      animId = requestAnimationFrame(animate);
-
-      const targets = kinematicsTargetRef.current;
-      if (sceneRef.current) {
-        // Damped interpolation for physical mass sensation
-        pressRam.position.y = THREE.MathUtils.lerp(pressRam.position.y, targets.pressY, 0.22);
-        transferArm.position.x = THREE.MathUtils.lerp(transferArm.position.x, targets.armX, 0.22);
-        conveyorBelt.scale.z = THREE.MathUtils.lerp(conveyorBelt.scale.z, targets.conveyorScale, 0.2);
-
-        // Clamping motion on %QX0.3
-        jaw1.position.x = THREE.MathUtils.lerp(jaw1.position.x, targets.jaw1X, 0.22);
-        jaw2.position.x = THREE.MathUtils.lerp(jaw2.position.x, targets.jaw2X, 0.22);
-
-        // Valve rotation on %QX0.4
-        if (targets.isPumpActive) {
-          pumpValve.rotation.y += 0.12;
-        }
-
-        beaconLight.intensity = THREE.MathUtils.lerp(beaconLight.intensity, targets.beaconIntensity, 0.25);
-
-        // Continuous swirl of spark particles on collision
-        if (targets.isShaking) {
-          sparkParticles.rotation.y += 0.05;
-        }
-
-        // Camera target lerp when user is NOT actively dragging
-        if (!targets.isUserInteracting) {
-          const shakeX = targets.isShaking ? (Math.random() - 0.5) * 0.05 : 0;
-          const shakeY = targets.isShaking ? (Math.random() - 0.5) * 0.05 : 0;
-          const targetWithShake = targets.cameraPos.clone().add(new THREE.Vector3(shakeX, shakeY, 0));
-          camera.position.lerp(targetWithShake, 0.09);
-          controls.target.lerp(targets.cameraLook, 0.09);
-        }
-
-        controls.update();
-        renderer.render(scene, camera);
-      }
-    };
-    animate();
-
+    // Resize Handler
     const handleResize = () => {
       if (!mountRef.current) return;
-      const w = mountRef.current.clientWidth || 600;
-      const h = mountRef.current.clientHeight || 440;
+      const w = mountRef.current.clientWidth;
+      const h = mountRef.current.clientHeight;
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
     };
+    window.addEventListener("resize", handleResize);
 
-    const resizeObserver = new ResizeObserver(() => handleResize());
-    resizeObserver.observe(mountRef.current);
+    // 120 FPS Continuous Render Loop
+    let lastTime = performance.now();
+    let animId: number;
+
+    const animate = (time: number) => {
+      animId = requestAnimationFrame(animate);
+      const dt = Math.min((time - lastTime) / 1000, 0.1);
+      lastTime = time;
+
+      // Update particle physics
+      particleEngine.update(dt);
+
+      // Smooth Camera & Target Lerp
+      const targets = cameraTargetRef.current;
+      if (!targets.isInteracting) {
+        controls.target.lerp(targets.lookAt, dt * 6.0);
+        camera.position.lerp(targets.position, dt * 6.0);
+
+        // Screen Shake decay
+        if (targets.shakeIntensity > 0.001) {
+          const shakeX = (Math.random() - 0.5) * targets.shakeIntensity;
+          const shakeY = (Math.random() - 0.5) * targets.shakeIntensity;
+          camera.position.x += shakeX;
+          camera.position.y += shakeY;
+          targets.shakeIntensity *= 0.88;
+        }
+      }
+      controls.update();
+
+      renderer.render(scene, camera);
+    };
+
+    animId = requestAnimationFrame(animate);
 
     return () => {
-      resizeObserver.disconnect();
       cancelAnimationFrame(animId);
-      controls.dispose();
+      window.removeEventListener("resize", handleResize);
+      particleEngine.dispose();
       renderer.dispose();
       if (mountRef.current) mountRef.current.replaceChildren();
     };
   }, []);
 
-  // Update Camera View Presets
-  const handleSelectCameraView = (view: "iso" | "die" | "top") => {
-    setCameraView(view);
-    const targets = kinematicsTargetRef.current;
-    targets.isUserInteracting = false; // Reset user interaction lock so preset applies cleanly
-
-    if (view === "iso") {
-      targets.cameraPos = new THREE.Vector3(0, 4.4, 9.6);
-      targets.cameraLook = new THREE.Vector3(0, 0.8, 0);
-    } else if (view === "die") {
-      targets.cameraPos = new THREE.Vector3(0.55, 1.45, 3.6);
-      targets.cameraLook = new THREE.Vector3(0.15, 0.75, 0);
-    } else if (view === "top") {
-      // High-angle isometric top view (gimbal-free, shows all 6 actuators)
-      targets.cameraPos = new THREE.Vector3(0, 9.8, 2.4);
-      targets.cameraLook = new THREE.Vector3(0, 0, 0);
-    }
-  };
-
-  // Update Kinematics Targets and Audio based on active ReplayFrame
+  // Dynamically Mount the Active Machine Model
   useEffect(() => {
-    if (!sceneRef.current) return;
-    const { pressRam, pumpValve, laserCurtain, sparkParticles, rimLight } = sceneRef.current;
-    const targets = kinematicsTargetRef.current;
+    const scene = sceneRef.current;
+    if (!scene) return;
+
+    // Tear down existing machine
+    if (machineRef.current) {
+      machineRef.current.dispose();
+      machineRef.current = null;
+    }
+
+    // Build the selected machine
+    let newMachine: MachineInstance;
+    switch (activeMachineType) {
+      case "bottle_filler":
+        newMachine = buildBottleFiller(scene);
+        break;
+      case "conveyor_diverter":
+        newMachine = buildConveyorDiverter(scene);
+        break;
+      case "curing_oven":
+        newMachine = buildCuringOven(scene);
+        break;
+      case "motor_bridge":
+        newMachine = buildMotorBridge(scene);
+        break;
+      case "robot_handover":
+        newMachine = buildRobotHandover(scene);
+        break;
+      case "stamping_press":
+      default:
+        newMachine = buildStampingPress(scene);
+        break;
+    }
+
+    machineRef.current = newMachine;
+
+    // Set initial camera focus to machine center
+    if (cameraTargetRef.current) {
+      cameraTargetRef.current.lookAt.copy(newMachine.collisionPoint);
+    }
+  }, [activeMachineType]);
+
+  // Update Kinematics, Camera Tracking, Audio, & Particle Effects
+  useEffect(() => {
+    const machine = machineRef.current;
+    const particles = particleEngineRef.current;
+    const audio = audioRef.current;
+    if (!machine) return;
 
     const outputs = currentFrame?.outputs || {};
-    const isPressDown = !!outputs["%QX0.0"];
-    const isArmIn = !!outputs["%QX0.1"];
-    const isConveyorOn = !!outputs["%QX0.2"];
-    const isClampShut = !!outputs["%QX0.3"];
-    const isPumpOpen = !!outputs["%QX0.4"];
-    const isAlarm = !!outputs["%QX0.5"] || isCollision;
+    const isCrash = Boolean(isCollision);
+    const safe = Boolean(isSafe);
 
-    // Set kinematic targets for lerp animation
-    targets.pressY = isPressDown ? 0.45 : 3.1;
-    targets.armX = isArmIn ? 1.62 : 0.0;
-    targets.conveyorScale = isConveyorOn ? 1.05 : 1.0;
-    targets.jaw1X = isClampShut ? -0.44 : -0.72;
-    targets.jaw2X = isClampShut ? 0.44 : 0.72;
-    targets.isPumpActive = isPumpOpen;
-    targets.beaconIntensity = isAlarm ? 4.5 : 0;
-    targets.isShaking = Boolean(isCollision);
+    // Update 3D machine kinematics
+    machine.updateKinematics(outputs, 0.016, isCrash, safe);
 
-    // Audio cues
-    if (audioRef.current) {
-      if (isCollision && !prevCollisionRef.current) {
-        audioRef.current.playCollisionSound();
-      } else {
-        const moved =
-          isPressDown !== !!prevOutputsRef.current["%QX0.0"] ||
-          isArmIn !== !!prevOutputsRef.current["%QX0.1"] ||
-          isConveyorOn !== !!prevOutputsRef.current["%QX0.2"] ||
-          isClampShut !== !!prevOutputsRef.current["%QX0.3"] ||
-          isPumpOpen !== !!prevOutputsRef.current["%QX0.4"];
-        if (moved) {
-          audioRef.current.playServoHum();
-        }
-      }
+    // Audio triggers on state change
+    const prevOutputs = prevOutputsRef.current;
+    const hasOutputsChanged = Object.keys(outputs).some((k) => outputs[k] !== prevOutputs[k]);
+    if (hasOutputsChanged && !isCrash && audio) {
+      audio.playServoHum();
     }
-    prevCollisionRef.current = Boolean(isCollision);
     prevOutputsRef.current = { ...outputs };
 
-    // Visual Breach Glow vs Emerald Safe Halo
-    if (isCollision) {
-      (pressRam.material as THREE.MeshStandardMaterial).emissive.setHex(0xff0044);
-      (sparkParticles.material as THREE.PointsMaterial).opacity = 1.0;
-      rimLight.color.setHex(0xef4444);
-    } else if (isSafe) {
-      (pressRam.material as THREE.MeshStandardMaterial).emissive.setHex(0x064e3b);
-      (sparkParticles.material as THREE.PointsMaterial).opacity = 0.0;
-      rimLight.color.setHex(0x10b981);
-    } else {
-      (pressRam.material as THREE.MeshStandardMaterial).emissive.setHex(0x000000);
-      (sparkParticles.material as THREE.PointsMaterial).opacity = 0.0;
-      rimLight.color.setHex(0xf59e0b);
+    // Collision Detection & Cinematic Impact Trigger
+    if (isCrash && !prevCollisionRef.current) {
+      // Trigger camera micro-shake & zoom to collision impact point
+      cameraTargetRef.current.shakeIntensity = 0.18;
+      cameraTargetRef.current.lookAt.copy(machine.collisionPoint);
+
+      // Play tailored audio
+      if (audio) audio.playCollisionSound(activeMachineType);
+
+      // Emit high-energy particle burst
+      if (particles) {
+        if (activeMachineType === "bottle_filler") {
+          particles.emitGlassShards(machine.collisionPoint, 60);
+        } else if (activeMachineType === "motor_bridge") {
+          particles.emitArcFlash(machine.collisionPoint, 65);
+        } else if (activeMachineType === "curing_oven") {
+          particles.emitThermalFlare(machine.collisionPoint, 50);
+        } else {
+          particles.emitSparks(machine.collisionPoint, 55, 6.0);
+        }
+      }
+    } else if (safe && !prevCollisionRef.current && currentFrame?.cycle === 1) {
+      if (audio) audio.playSafeChime();
     }
 
-    if (isPumpOpen) {
-      (pumpValve.material as THREE.MeshStandardMaterial).emissive.setHex(0x581c87);
-    } else {
-      (pumpValve.material as THREE.MeshStandardMaterial).emissive.setHex(0x000000);
-    }
+    prevCollisionRef.current = isCrash;
+  }, [currentFrame, isCollision, isSafe, activeMachineType]);
 
-    (laserCurtain.material as THREE.MeshBasicMaterial).opacity = isAlarm ? 0.45 : 0.15;
-  }, [currentFrame, isCollision, isSafe]);
+  // Select Camera Preset
+  const handleSelectCameraView = (view: "iso" | "macro" | "top") => {
+    setCameraView(view);
+    const targets = cameraTargetRef.current;
+    targets.isInteracting = false;
+    const focus = machineRef.current ? machineRef.current.collisionPoint : new THREE.Vector3(0, 0.8, 0);
+
+    if (view === "iso") {
+      targets.position.set(0, 4.4, 9.6);
+      targets.lookAt.copy(focus);
+    } else if (view === "macro") {
+      // Dramatic cinematic close-up of collision zone
+      targets.position.set(focus.x + 0.65, focus.y + 0.45, focus.z + 2.8);
+      targets.lookAt.copy(focus);
+    } else if (view === "top") {
+      targets.position.set(0, 9.8, 2.4);
+      targets.lookAt.set(0, 0, 0);
+    }
+  };
 
   const cycleDisplay = currentFrame
     ? `CYCLE ${String(currentFrame.cycle).padStart(2, "0")} · ${currentFrame.timestamp_ms}ms`
@@ -625,36 +503,88 @@ export default function WorkcellCanvas({
 
   return (
     <div className="relative w-full h-full min-h-[420px] rounded-2xl overflow-hidden bg-[#06070A] border border-white/[0.08] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)] group">
-      {/* Dynamic Radial Ambient Viewport Glow */}
+      {/* Dynamic Ambient Viewport Glow */}
       <div
         className={`absolute inset-0 pointer-events-none transition-all duration-700 ${
           isCollision ? "ambient-glow-hazard" : isSafe ? "ambient-glow-safe" : ""
         }`}
       />
 
-      {/* Three.js Canvas Container (Interactive Orbit Controls) */}
+      {/* Three.js Interactive Canvas Container (120 FPS Fluidity) */}
       <div ref={mountRef} className="w-full h-full cursor-grab active:cursor-grabbing" />
 
-      {/* Subtle Drag-To-Orbit Hint (Disappears on hover) */}
-      <div className="absolute bottom-3 left-3 bg-black/60 backdrop-blur-md px-2 py-1 rounded-md border border-white/[0.06] text-[10px] font-mono text-slate-400 pointer-events-none opacity-60 group-hover:opacity-100 transition">
-        <span>🖱️ Drag to rotate · Scroll to zoom</span>
+      {/* Subtle Drag Hint */}
+      <div className="absolute bottom-3 left-3 bg-black/60 backdrop-blur-md px-2 py-1 rounded-md border border-white/[0.06] text-[10px] font-mono text-slate-400 pointer-events-none opacity-60 group-hover:opacity-100 transition flex items-center space-x-1.5">
+        <span>🖱️ Drag to orbit · Scroll to zoom</span>
+        <span className="text-slate-600">|</span>
+        <span className="text-amber-400 font-semibold">120 FPS Kinematics</span>
       </div>
 
-      {/* Top Floating HUD Bar: Left Telemetry Pill + Right Viewport Controls */}
+      {/* Top Floating Telemetry & Controls HUD */}
       <div className="absolute top-3.5 inset-x-3.5 flex flex-wrap items-center justify-between gap-2 pointer-events-none z-10">
-        {/* Left Telemetry Status Pill */}
-        <div className="bg-[#0C0E14]/90 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/[0.08] text-[11px] font-mono text-slate-300 flex items-center space-x-2 pointer-events-auto shadow-lg">
-          <span
-            className={`w-2 h-2 rounded-full ${
-              isCollision ? "bg-rose-500 animate-ping" : isSafe ? "bg-emerald-400" : "bg-amber-400 animate-pulse"
-            }`}
-          />
-          <span className="font-semibold text-white tracking-wide">{cycleDisplay}</span>
-          <span className="text-slate-500">|</span>
-          <span className="text-[10px] text-slate-400 hidden sm:inline">6 UNIVERSAL ACTUATORS</span>
+        {/* Left: Active Machine Badge + Replay Cycle */}
+        <div className="flex items-center space-x-2 pointer-events-auto">
+          {/* Machine Archetype Selector Pill */}
+          <div className="relative">
+            <button
+              onClick={() => setShowMachineMenu(!showMachineMenu)}
+              className="bg-[#0C0E14]/90 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/[0.12] text-[11px] font-mono text-white flex items-center space-x-1.5 shadow-lg hover:border-amber-500/50 transition active:scale-95"
+              title="Switch 3D Industrial Machinery Digital Twin"
+            >
+              <span className="text-sm">{activeMachineMeta.icon}</span>
+              <span className="font-bold tracking-wide truncate max-w-[150px] sm:max-w-[210px]">
+                {activeMachineMeta.name}
+              </span>
+              <svg className="w-3 h-3 text-slate-400" viewBox="0 0 12 12" fill="none">
+                <path d="M2.5 4.5L6 8L9.5 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+
+            {/* Machine Archetype Menu */}
+            {showMachineMenu && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setShowMachineMenu(false)} />
+                <div className="absolute top-full mt-2 left-0 w-80 rounded-xl bg-[#0C0E14] border border-white/[0.15] shadow-2xl p-2 z-50 text-xs font-mono space-y-1">
+                  <div className="px-2 py-1 text-[10px] uppercase font-bold text-slate-500 tracking-wider">
+                    Select Industrial Machinery Digital Twin
+                  </div>
+                  {Object.values(MACHINE_DEFINITIONS).map((m) => (
+                    <button
+                      key={m.id}
+                      onClick={() => {
+                        setActiveMachineType(m.id);
+                        setShowMachineMenu(false);
+                      }}
+                      className={`w-full text-left px-2.5 py-2 rounded-lg flex items-center space-x-2.5 transition ${
+                        activeMachineType === m.id
+                          ? "bg-amber-500/20 text-amber-200 border border-amber-500/40"
+                          : "text-slate-300 hover:bg-white/[0.05]"
+                      }`}
+                    >
+                      <span className="text-base">{m.icon}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-bold text-[11px] text-white truncate">{m.name}</div>
+                        <div className="text-[10px] text-slate-400 truncate">{m.tagline}</div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Telemetry Cycle Badge */}
+          <div className="bg-[#0C0E14]/90 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/[0.08] text-[11px] font-mono text-slate-300 flex items-center space-x-2 shadow-lg">
+            <span
+              className={`w-2 h-2 rounded-full ${
+                isCollision ? "bg-rose-500 animate-ping" : isSafe ? "bg-emerald-400" : "bg-amber-400 animate-pulse"
+              }`}
+            />
+            <span className="font-semibold text-white tracking-wide">{cycleDisplay}</span>
+          </div>
         </div>
 
-        {/* Right Unified Controls: Audio Synthesizer + Camera Views */}
+        {/* Right: Audio Synthesizer + Camera Views */}
         <div className="bg-[#0C0E14]/90 backdrop-blur-md p-1 rounded-full border border-white/[0.08] text-[11px] font-mono flex items-center space-x-1 pointer-events-auto shadow-lg">
           {/* Audio Synthesizer Toggle */}
           <button
@@ -664,7 +594,7 @@ export default function WorkcellCanvas({
                 ? "bg-white/[0.04] text-slate-400 hover:text-white"
                 : "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
             }`}
-            title="Toggle Industrial WebAudio Synthesizer (Servo hum + breach thud)"
+            title="Toggle Procedural WebAudio Synthesizer (Metallic impacts, glass shatter, electrical arcs)"
           >
             <span>{isMuted ? "🔇 Muted" : "🔊 Audio"}</span>
           </button>
@@ -681,12 +611,12 @@ export default function WorkcellCanvas({
             Iso
           </button>
           <button
-            onClick={() => handleSelectCameraView("die")}
+            onClick={() => handleSelectCameraView("macro")}
             className={`px-2.5 py-1 rounded-full transition ${
-              cameraView === "die" ? "bg-amber-400 text-slate-950 font-bold shadow" : "text-slate-400 hover:text-white"
+              cameraView === "macro" ? "bg-amber-400 text-slate-950 font-bold shadow" : "text-slate-400 hover:text-white"
             }`}
           >
-            Die Zoom
+            Die / Impact
           </button>
           <button
             onClick={() => handleSelectCameraView("top")}
@@ -699,15 +629,15 @@ export default function WorkcellCanvas({
         </div>
       </div>
 
-      {/* Cinematic Collision Breach Warning */}
+      {/* Cinematic Collision Breach Warning Overlay */}
       {isCollision && (
-        <div className="absolute inset-0 border-2 border-rose-500/70 pointer-events-none flex items-center justify-center p-4">
-          <div className="bg-rose-950/90 backdrop-blur-md border border-rose-500/80 px-5 py-2.5 rounded-xl shadow-2xl text-rose-100 font-mono text-xs font-bold tracking-wider animate-bounce flex items-center space-x-2 max-w-[90%] text-center">
+        <div className="absolute inset-0 border-2 border-rose-500/80 pointer-events-none flex items-center justify-center p-4">
+          <div className="bg-rose-950/95 backdrop-blur-md border border-rose-500/90 px-5 py-2.5 rounded-xl shadow-2xl text-rose-100 font-mono text-xs font-bold tracking-wider animate-bounce flex items-center space-x-2 max-w-[90%] text-center">
             <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping shrink-0" />
             <span className="truncate">
               {collisionDescription
-                ? `CRITICAL BREACH: ${collisionDescription}`
-                : "CRITICAL INVARIANT BREACH: CONFLICTING ACTUATORS IN ACTIVE INTERFERENCE"}
+                ? `CRITICAL BREACH [${activeMachineMeta.collisionZoneName.toUpperCase()}]: ${collisionDescription}`
+                : `CRITICAL INVARIANT BREACH INSIDE ${activeMachineMeta.collisionZoneName.toUpperCase()}`}
             </span>
           </div>
         </div>

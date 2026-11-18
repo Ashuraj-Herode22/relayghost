@@ -2,18 +2,20 @@
 
 import React from "react";
 import { ReplayFrame } from "@/lib/plcVerifier";
+import { MachineArchetype, MACHINE_DEFINITIONS } from "./workcell/types";
 
 interface ActuatorBoardProps {
   currentFrame?: ReplayFrame;
+  machineType?: MachineArchetype;
 }
 
-const ACTUATOR_DEFS = [
-  { addr: "%QX0.0", name: "Press Ram", icon: "🔨" },
-  { addr: "%QX0.1", name: "Transfer Arm", icon: "🦾" },
-  { addr: "%QX0.2", name: "Conveyor", icon: "📦" },
-  { addr: "%QX0.3", name: "Clamp", icon: "🗜️" },
-  { addr: "%QX0.4", name: "Relief Valve", icon: "⚙️" },
-  { addr: "%QX0.5", name: "Beacon", icon: "🚨" },
+const DEFAULT_ACTUATOR_DEFS = [
+  { addr: "%QX0.0", label: "Press Ram", type: "Piston" },
+  { addr: "%QX0.1", label: "Transfer Arm", type: "Slide" },
+  { addr: "%QX0.2", label: "Conveyor", type: "Belt" },
+  { addr: "%QX0.3", label: "Clamp", type: "Jaws" },
+  { addr: "%QX0.4", label: "Relief Valve", type: "Motor" },
+  { addr: "%QX0.5", label: "Beacon", type: "Laser" },
 ];
 
 const SENSOR_DEFS = [
@@ -27,39 +29,42 @@ const SENSOR_DEFS = [
   { addr: "%IX0.7", name: "Reset" },
 ];
 
-export default function ActuatorBoard({ currentFrame }: ActuatorBoardProps) {
+export default function ActuatorBoard({ currentFrame, machineType = "stamping_press" }: ActuatorBoardProps) {
   const outputs = currentFrame?.outputs || {};
   const inputs = currentFrame?.inputs || {};
 
+  const machineMeta = MACHINE_DEFINITIONS[machineType];
+  const actuators = machineMeta ? machineMeta.actuators : DEFAULT_ACTUATOR_DEFS;
+
   return (
     <div className="rounded-2xl bg-[#0C0E14] border border-white/[0.08] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)] px-4 py-2.5 font-mono text-xs flex flex-wrap items-center justify-between gap-4">
-      {/* Left: 6 Universal Actuators */}
+      {/* Left: 6 Machine-Specific Actuators */}
       <div className="flex items-center space-x-2">
         <div className="flex items-center space-x-1.5 text-slate-400 text-[10px] uppercase font-bold tracking-wider mr-1">
           <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
           <span>Actuators (%QX):</span>
         </div>
 
-        <div className="flex items-center space-x-1.5">
-          {ACTUATOR_DEFS.map((act) => {
+        <div className="flex items-center space-x-1.5 flex-wrap gap-y-1">
+          {actuators.map((act) => {
             const isActive = Boolean(outputs[act.addr]);
             return (
               <div
                 key={act.addr}
-                className={`px-2 py-1 rounded-lg border transition-all duration-150 flex items-center space-x-1.5 ${
+                className={`px-2.5 py-1 rounded-lg border transition-all duration-150 flex items-center space-x-1.5 ${
                   isActive
                     ? "border-amber-500/70 bg-amber-950/40 text-amber-200 shadow-[0_0_8px_rgba(245,158,11,0.25)]"
                     : "border-white/[0.06] bg-[#090C12] text-slate-400"
                 }`}
-                title={`${act.addr}: ${act.name} (${isActive ? "ACTIVE" : "OFF"})`}
+                title={`${act.addr}: ${act.label} (${isActive ? "ACTIVE" : "OFF"})`}
               >
                 <span
                   className={`w-1.5 h-1.5 rounded-full ${
                     isActive ? "bg-amber-400 shadow-[0_0_6px_#f59e0b]" : "bg-slate-700"
                   }`}
                 />
-                <span className="font-bold text-[11px]">{act.addr}</span>
-                <span className="text-[10px] text-slate-300 hidden md:inline">{act.name}</span>
+                <span className="font-bold text-[11px] text-white">{act.addr}</span>
+                <span className="text-[10px] text-slate-300 hidden md:inline">{act.label}</span>
               </div>
             );
           })}

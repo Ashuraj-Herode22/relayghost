@@ -15,6 +15,7 @@ import {
   Rung,
   VerificationResult,
 } from "@/lib/plcVerifier";
+import { classifyMachineArchetype } from "@/components/workcell/types";
 
 // Client-only dynamic import for Three.js 3D Viewport to prevent SSR canvas hydration mismatch
 const WorkcellCanvas = dynamic(() => import("@/components/WorkcellCanvas"), {
@@ -173,6 +174,8 @@ export default function Home() {
       verificationResult.collision_cycle !== null
   );
 
+  const machineType = classifyMachineArchetype(sourceName, verificationResult?.hazard || "");
+
   if (!hasMounted) {
     return (
       <div className="min-h-screen bg-[#06070A] text-slate-100 flex flex-col items-center justify-center font-mono text-xs space-y-3">
@@ -322,6 +325,7 @@ export default function Home() {
                 isCollision={isCrashFrame}
                 isSafe={Boolean(verificationResult?.safe)}
                 collisionDescription={verificationResult?.hazard || undefined}
+                sourceName={sourceName}
               />
             </div>
 
@@ -361,7 +365,7 @@ export default function Home() {
 
         {/* 3. Compact Bottom Telemetry Strip */}
         <div className="pt-0.5">
-          <ActuatorBoard currentFrame={currentFrame} />
+          <ActuatorBoard currentFrame={currentFrame} machineType={machineType} />
         </div>
       </main>
 
