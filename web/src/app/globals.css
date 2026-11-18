@@ -79,3 +79,21 @@ body {
   stroke-dasharray: 6 3;
   animation: wire-pulse 0.8s linear infinite;
 }
+
+/* Completely eliminate Next.js dev indicator badge, portal, and dev overlay in development */
+nextjs-portal,
+#__next-build-watcher,
+[data-nextjs-dev-tools],
+[data-nextjs-toast],
+next-portal {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  overflow: hidden !important;
+  position: absolute !important;
+  z-index: -99999 !important;
+  clip-path: inset(100%) !important;
+}

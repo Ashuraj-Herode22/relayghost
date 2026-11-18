@@ -82,6 +82,22 @@ export default function RootLayout({
                     return true;
                   }
                 };
+
+                // Automatically purge any Next.js development tools badge / portal element
+                var purgeDevTools = function() {
+                  var els = document.querySelectorAll("nextjs-portal, next-portal, #__next-build-watcher");
+                  for (var i = 0; i < els.length; i++) {
+                    els[i].remove();
+                  }
+                };
+                if (typeof MutationObserver !== "undefined") {
+                  new MutationObserver(purgeDevTools).observe(document.documentElement, {
+                    childList: true,
+                    subtree: true,
+                  });
+                }
+                document.addEventListener("DOMContentLoaded", purgeDevTools);
+                window.addEventListener("load", purgeDevTools);
               }
             `,
           }}
