@@ -358,6 +358,8 @@ export default function Home() {
                 canPatch={Boolean(verificationResult && !verificationResult.safe)}
                 deltaInfo={deltaInfo}
                 onRevertToOriginal={handleRevertToOriginal}
+                machineType={machineType}
+                sourceName={sourceName}
               />
             </div>
           </div>
