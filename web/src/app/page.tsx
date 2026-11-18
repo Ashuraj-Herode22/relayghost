@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-import WorkcellCanvas from "@/components/WorkcellCanvas";
+import dynamic from "next/dynamic";
 import LadderViewer from "@/components/LadderViewer";
 import ScrubberPlayer from "@/components/ScrubberPlayer";
 import PresetBar from "@/components/PresetBar";
@@ -16,20 +16,46 @@ import {
   VerificationResult,
 } from "@/lib/plcVerifier";
 
+// Client-only dynamic import for Three.js 3D Viewport to prevent SSR canvas hydration mismatch
+const WorkcellCanvas = dynamic(() => import("@/components/WorkcellCanvas"), {
+  ssr: false,
+  loading: () => (
+    <div className="w-full h-full min-h-[420px] rounded-2xl bg-[#06070A] border border-white/[0.08] flex items-center justify-center font-mono text-xs text-slate-500">
+      <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse mr-2" />
+      <span>Loading 3D Digital Twin...</span>
+    </div>
+  ),
+});
+
 export default function Home() {
   const [selectedPresetId, setSelectedPresetId] = useState<string>(
     "known-errors/01_stamping_press_missing_interlock.xml"
   );
-  const [currentRungs, setCurrentRungs] = useState<Rung[]>([]);
-  const [verificationResult, setVerificationResult] = useState<VerificationResult | null>(null);
+  const [currentRungs, setCurrentRungs] = useState<Rung[]>(() => {
+    try {
+      return parsePlcopenXml(BENCHMARKS[0].xml);
+    } catch {
+      return [];
+    }
+  });
+  const [verificationResult, setVerificationResult] = useState<VerificationResult | null>(() => {
+    try {
+      const rungs = parsePlcopenXml(BENCHMARKS[0].xml);
+      return executeModelChecker(rungs);
+    } catch {
+      return null;
+    }
+  });
   const [currentFrameIndex, setCurrentFrameIndex] = useState<number>(0);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [sourceName, setSourceName] = useState<string>(
     "01 · Stamping Press (Known Defect)"
   );
-  const [originalXml, setOriginalXml] = useState<string>("");
-  const [originalName, setOriginalName] = useState<string>("");
+  const [originalXml, setOriginalXml] = useState<string>(() => BENCHMARKS[0]?.xml || "");
+  const [originalName, setOriginalName] = useState<string>(
+    () => BENCHMARKS[0]?.name || "01 · Stamping Press (Known Defect)"
+  );
   const [deltaInfo, setDeltaInfo] = useState<{
     patchDescription: string;
     deltaText: string;
@@ -63,14 +89,6 @@ export default function Home() {
       setIsLoading(false);
     }
   };
-
-  // Initial load: Preset 1
-  useEffect(() => {
-    const defaultPreset = BENCHMARKS.find((b) => b.id === selectedPresetId) || BENCHMARKS[0];
-    if (defaultPreset) {
-      loadAndVerify(defaultPreset.xml, defaultPreset.name);
-    }
-  }, []);
 
   const handleSelectPreset = (presetId: string) => {
     setSelectedPresetId(presetId);
