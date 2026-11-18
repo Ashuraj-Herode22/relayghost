@@ -30,12 +30,30 @@ export default function RootLayout({
         <script
           dangerouslySetInnerHTML={{
             __html: `
-              // Intercept and swallow uncaught errors originating from third-party Chrome extensions
+              // Intercept and swallow uncaught errors and hydration warnings originating from third-party Chrome extensions
               if (typeof window !== "undefined") {
+                // Filter console.error from triggering Next.js dev overlay on extension DOM mutations
+                var origError = console.error;
+                console.error = function() {
+                  var str = "";
+                  for (var i = 0; i < arguments.length; i++) {
+                    str += (typeof arguments[i] === "object" ? JSON.stringify(arguments[i]) : String(arguments[i])) + " ";
+                  }
+                  if (
+                    str.indexOf("bis_skin_checked") !== -1 ||
+                    str.indexOf("chrome-extension://") !== -1 ||
+                    str.indexOf("M_ID") !== -1
+                  ) {
+                    return;
+                  }
+                  origError.apply(console, arguments);
+                };
+
                 window.addEventListener("error", function(e) {
                   if (
                     (e.filename && e.filename.startsWith("chrome-extension://")) ||
                     (e.message && e.message.includes("M_ID")) ||
+                    (e.message && e.message.includes("bis_skin_checked")) ||
                     (e.error && e.error.stack && e.error.stack.includes("chrome-extension://"))
                   ) {
                     e.stopImmediatePropagation();

@@ -28,6 +28,7 @@ const WorkcellCanvas = dynamic(() => import("@/components/WorkcellCanvas"), {
 });
 
 export default function Home() {
+  const [hasMounted, setHasMounted] = useState(false);
   const [selectedPresetId, setSelectedPresetId] = useState<string>(
     "known-errors/01_stamping_press_missing_interlock.xml"
   );
@@ -160,6 +161,10 @@ export default function Home() {
     }
   };
 
+  useEffect(() => {
+    setHasMounted(true);
+  }, []);
+
   const currentFrame = verificationResult?.trace[currentFrameIndex];
   const isCrashFrame = Boolean(
     verificationResult &&
@@ -167,6 +172,22 @@ export default function Home() {
       currentFrameIndex === verificationResult.trace.length - 1 &&
       verificationResult.collision_cycle !== null
   );
+
+  if (!hasMounted) {
+    return (
+      <div className="min-h-screen bg-[#06070A] text-slate-100 flex flex-col items-center justify-center font-mono text-xs space-y-3">
+        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500 via-violet-600 to-rose-600 p-[1px] shadow-[0_0_20px_rgba(245,158,11,0.35)] flex items-center justify-center animate-pulse">
+          <div className="w-full h-full bg-[#0C0E14] rounded-[11px] flex items-center justify-center">
+            <span className="text-amber-400 font-bold tracking-wider">RG</span>
+          </div>
+        </div>
+        <div className="flex items-center space-x-2 text-slate-400">
+          <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+          <span className="tracking-wide">Initializing RelayGhost SCADA Engine...</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#06070A] text-slate-100 flex flex-col font-sans selection:bg-amber-500/20 selection:text-amber-200">
