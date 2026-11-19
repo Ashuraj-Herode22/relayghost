@@ -3,12 +3,22 @@
   "hooks": [
     {
       "name": "plc-temporal-safety-gate",
-      "description": "Automatically runs the RelayGhost temporal model checker whenever a PLC XML file is saved",
+      "description": "Deterministic shell safety gate running the RelayGhost temporal model checker whenever a PLC XML benchmark is saved",
       "trigger": "PostFileSave",
       "matcher": "plc-benchmarks/.*\\.xml$",
       "action": {
         "type": "command",
         "command": "python3 engine/verify_cli.py"
+      }
+    },
+    {
+      "name": "ears-interlock-advisor",
+      "description": "Autonomously synthesizes Rolls-Royce EARS safety interlocks when a PLC invariant failure is reported",
+      "trigger": "PostFileSave",
+      "matcher": "plc-benchmarks/.*\\.xml$",
+      "action": {
+        "type": "agent",
+        "prompt": "A PLC file at {{filePath}} was saved. Use the relayghost-verifier MCP tool to verify temporal invariants. If any safety invariant fails, analyze the counterexample cycle, explain the physical hazard in plain English, and synthesize a Rolls-Royce EARS interlock patch to resolve the defect."
       }
     }
   ]
